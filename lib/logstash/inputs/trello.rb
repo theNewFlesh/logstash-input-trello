@@ -29,7 +29,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	config(:token, :validate => :string, :required => true)
 	# oauth secret
 
-	config(:query, :validate => :string, :required => true)
+	config(:query, :validate => :hash, :required => true)
 	# Valid Values:
 	# 	a string with a length from 1 to 16384
 	
@@ -79,7 +79,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	# Valid Values:
 	# 	a number from 1 to 1000
 
-	config(:card_fields, :default => "all")
+	config(:card_fields, :vailidate => :array, :default => ["all"])
 	# Valid Values:
 	# 	badges
 	# 	checkItemStates
@@ -194,50 +194,73 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		@host = Socket.gethostname
 	end
 
+	private
+	def get_uri(page)
+		query_url = ""
+		@query.each do |key, val|
+			query_url += key + "%3A" + val + "+"
+		end
+
+		uri =  "/1/search?"
+		uri += "query=" + query_url
+		uri += "&modelTypes=cards"
+		
+		# card options
+		uri += "&cards_limit=1000"
+		uri += "&cards_page=" + page.to_s()
+		uri += "&card_members=true"
+		uri += "&card_board=true"
+		uri += "&card_list=true"
+		uri += "&card_fields=" + @card_fields.join(",")
+		
+		# board options
+		uri += "&boards_limit=1000"
+		uri += "&board_fields=name"
+		
+		uri += "&key=" + @key
+		uri += "&token=" + @token
+		return uri
+	end
+
+	private
+	def coerce_nulls(data)
+		data.each do |key, val|
+			if val == ""
+				data[key] = nil
+			end
+		end
+		return data
+	end
 
 	public
 	def run(queue)
 		# begin
 		Stud.interval(@interval) do
-			query_url = ""
-			query.each do |key, val|
-				query_url += key + "%3A" + val + "+"
-			end
-
 			(0..1000).each do |page|
-				uri =  "https://api.trello.com/1/search?"
-				uri += "query=" + query_url
-				uri += "&modelTypes=cards"
-				
-				# card options
-				uri += "&cards_limit=1000"
-				uri += "&cards_page=" + page.to_s()
-				uri += "&card_members=true"
-				uri += "&card_board=true"
-				uri += "&card_list=true"
-				uri += "&card_fields=" + card_fields.join(",")
-				
-				# board options
-				uri += "&boards_limit=1000"
-				uri += "&board_fields=name"
-				
-				uri += "&key=" + key
-				uri += "&token=" + token
-				uri = URI(uri)
-		
-				response = JSON.parse(Net::HTTP.get(uri))
-				if response["cards"].length > 0
-					# add events to queue
-					response["cards"].each do |data|
-						event = LogStash::Event.new("data" => data, "host" => @host)
-						decorate(event)
-						queue << event
+				uri = get_uri(page)
+
+				response = Net::HTTP.new("api.trello.com", 443)
+				response.use_ssl = true
+				response = response.request_get(uri, {'Connection' => 'close'})
+				code = response.code.to_i()
+				if 199 < code and code < 300
+					response = JSON.parse(response.body())
+					response = coerce_nulls(response)
+					if response["cards"].length > 0
+						# add events to queue
+						response["cards"].each do |data|
+							event = LogStash::Event.new("data" => data, "host" => @host)
+							decorate(event)
+							queue << event
+						end
 					end
-				end
-				if response["cards"].length == 1000
-					next
+					if response["cards"].length == 1000
+						next
+					else
+						break
+					end
 				else
-					break
+					raise NET::HTTPError.new(response.body())
 				end
 			end
 		end
