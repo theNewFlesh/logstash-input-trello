@@ -8,12 +8,13 @@ require 'addressable/uri'
 require 'net/http'
 require 'json'
 require 'time'
+require 'set'
 
 # The trello filter is used querying the trello database and returning the resulting
 # cards as events
 
-class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
-	config_name "trello_boards"
+class LogStash::Inputs::Trello < LogStash::Inputs::Base
+	config_name "trello"
 	milestone 1
 
 	default(:codec, "json_lines")
@@ -22,12 +23,21 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 	config(:port, :validate => :number, :default => 443)
 		# The port trello listens on for REST requests
 
-	config(:entities, :validate => "string", :required => true, :default => "cards")
+	config(:organizations, :validate => :array, :required => true)
+		# an array of organizations from which to derive board ids
+
+	config(:entities, :validate => :array, :required => true, :default => ["all"])
 		# valid values:
-		# 	cards
-		# 	actions
-		# 	labels
-		# 	members
+		#	membersInvited
+		#	labels
+		#	lists
+		#	memberships
+		#	actions
+		#	members
+		#	checklists
+		#	cards
+		##boards
+		##organizations
 
 	config(:snake_case, :validate => :boolean, :default => false)
 		# coerce output field names into snake_case
@@ -41,21 +51,6 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 
 	config(:token, :validate => :string, :required => true)
 		# oauth secret
-
-	config(:board_ids, :validate => :array, :default => [])
-
-	config(:board_filter, :validate => :array,
-		   :required => true, :default => ["all"])
-		# valid values:
-		# 	all
-		# 	closed
-		# 	members
-		# 	open
-		# 	organization
-		# 	pinned
-		# 	public
-		# 	starred
-		# 	unpinned
 
 	config(:actions, :validate => :array, :default => ["all"])
 		# valid values:
@@ -191,7 +186,64 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		# 	url
 		# 	username
 
-	config(:cards, :validate => :string, :default => "none")
+	config(:board_ids, :validate => :array, :default => [])
+		# ids of boards to be queried
+
+	config(:board_filter, :validate => :array,
+		   :required => true, :default => ["all"])
+		# valid values:
+		# 	all
+		# 	closed
+		# 	members
+		# 	open
+		# 	organization
+		# 	pinned
+		# 	public
+		# 	starred
+		# 	unpinned
+
+	# board fields
+	config(:board_fields, :validate => :array,
+		   :default => 
+				["name",
+				"desc",
+				"descData",
+				"closed",
+				"idOrganization",
+				"pinned",
+				"url",
+				"shortUrl",
+				"prefs",
+				"labelNames"])
+		# valid values:
+		# 	all
+		# 	closed
+		# 	dateLastActivity
+		# 	dateLastView
+		# 	desc
+		# 	descData
+		# 	idOrganization
+		# 	invitations
+		# 	invited
+		# 	labelNames
+		# 	memberships
+		# 	name
+		# 	pinned
+		# 	powerUps
+		# 	prefs
+		# 	shortLink
+		# 	shortUrl
+		# 	starred
+		# 	subscribed
+		# 	url
+
+	config(:board_stars, :validate => :string, :default => "none")
+		# valid values:
+		# 	mine
+		# 	none
+
+	# CONFIG WITH ENTITIES
+	config(:cards, :validate => :string, :default => "all")
 		# valid values:
 		# 	all
 		# 	closed
@@ -228,8 +280,8 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		# 	url
 
 	config(:card_attachments, :validate => :boolean, :default => false)
-		valid values:
-			A boolean value or &quot;cover&quot; for only card cover attachments
+		# valid values:
+		# 	A boolean value or &quot;cover&quot; for only card cover attachments
 
 	config(:card_attachment_fields, :validate => :array, 
 			:default => ["all"])
@@ -245,25 +297,21 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		# 	previews
 		# 	url
 
-	config(:card_checklists, :validate => :string, :defualt => "none")
-		valid values:
-			all
-			none
+	config(:card_checklists, :validate => :string, :default => "none")
+		# valid values:
+		# 	all
+		# 	none
 
 	config(:card_stickers, :validate => :boolean, :default => false)
 		# valid values:
 		# 	true
 		# 	false
 
-	config(:board_stars, :validate => :string, :default => "none")
+	# CONFIG WITH ENTITIES
+	config(:labels, :validate => :string, :default => "all")
 		# valid values:
-		# 	mine
+		# 	all
 		# 	none
-
-	config(:labels, :validate => :string, :default => "none")
-		valid values:
-			all
-			none
 
 	config(:label_fields, :validate => :array, :default => ["all"])
 		# valid values:
@@ -273,11 +321,12 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		# 	name
 		# 	uses
 
-	config(:labels_limit, :validate => :string, :default => 50)
+	config(:labels_limit, :validate => :number, :default => 50)
 		# valid values:
 		# 	a number from 0 to 1000
-
-	config(:lists, :validate => :string, :default => "none")
+	
+	# CONFIG WITH ENTITIES
+	config(:lists, :validate => :string, :default => "all")
 		# valid values:
 		# 	all
 		# 	closed
@@ -293,6 +342,7 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		# 	pos
 		# 	subscribed
 
+	# CONFIG WITH ENTITIES
 	config(:memberships, :validate => :array, :default => ["all"])
 		# valid values:
 		# 	all
@@ -324,6 +374,7 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		# 	url
 		# 	username
 
+	# CONFIG WITH ENTITIES
 	config(:members, :validate => :string, :default => "none")
 		# valid values:
 		# 	admins
@@ -354,6 +405,7 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		# 	url
 		# 	username
 
+	# CONFIG WITH ENTITIES
 	config(:members_invited, :validate => :string, :default => "none")
 		# valid values:
 		# 	admins
@@ -383,7 +435,8 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		# 	url
 		# 	username
 
-	config(:checklists, :validate => :string, :default => "none")
+	# CONFIG WITH ENTITIES
+	config(:checklists, :validate => :string, :default => "all")
 		# valid values:
 		# 	all
 		# 	none
@@ -396,6 +449,7 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		# 	name
 		# 	pos
 
+	# CONFIG WITH ENTITIES
 	config(:organization, :validate => :boolean, :default => false)
 		# valid values:
 		# 	true
@@ -432,44 +486,11 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		# 	me
 		# 	normal
 
+	# CONFIG WITH ENTITIES
 	config(:my_prefs, :validate => :boolean, :default => false)
 		# valid values:
 		# 	true
 		# 	false
-
-	config(:field, :validate => :array,
-		   :default => 
-				["name",
-				"desc",
-				"descData",
-				"closed",
-				"idOrganization",
-				"pinned",
-				"url",
-				"shortUrl",
-				"prefs",
-				"labelNames"])
-		# valid values:
-		# 	all
-		# 	closed
-		# 	dateLastActivity
-		# 	dateLastView
-		# 	desc
-		# 	descData
-		# 	idOrganization
-		# 	invitations
-		# 	invited
-		# 	labelNames
-		# 	memberships
-		# 	name
-		# 	pinned
-		# 	powerUps
-		# 	prefs
-		# 	shortLink
-		# 	shortUrl
-		# 	starred
-		# 	subscribed
-		# 	url
 
 	public
 	def register()
@@ -481,8 +502,15 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 			end
 		end
 
-		@host = Socket.gethostname
+		if @entities == ["all"]
+			@entities = ["cards", "lists", "labels", "actions"]
+		end
+		# members_invited
+		# memberships
+		# members
+		# checkists
 
+		@host = Socket.gethostname
 		@board_filter                 = array_to_uri(@board_filter)
 
 		@actions                      = array_to_uri(@actions)
@@ -495,16 +523,17 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		@action_member_fields         = array_to_uri(@action_member_fields)
 		@action_member_creator        = @action_member_creator.to_s()
 		@action_member_creator_fields = array_to_uri(@action_member_creator_fields)
+		@board_fields                 = array_to_uri(@board_fields)
+		@board_stars                  = @board_stars
 		@cards                        = @cards
 		@card_fields                  = array_to_uri(@card_fields)
 		@card_attachments             = @card_attachments.to_s()
 		@card_attachment_fields       = array_to_uri(@card_attachment_fields)
 		@card_checklists              = @card_checklists
 		@card_stickers                = @card_stickers.to_s()
-		@board_stars                  = @board_stars
 		@labels                       = @labels
 		@label_fields                 = array_to_uri(@label_fields)
-		@labels_limit                 = @labels_limit
+		@labels_limit                 = @labels_limit.to_s()
 		@lists                        = @lists
 		@list_fields                  = array_to_uri(@list_fields)
 		@memberships                  = array_to_uri(@memberships)
@@ -520,27 +549,25 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		@organization_fields          = array_to_uri(@organization_fields)
 		@organization_memberships     = array_to_uri(@organization_memberships)
 		@my_prefs                     = @my_prefs.to_s()
-		@field                        = array_to_uri(@field)
 	end
 
 	private
 	def _board_ids()
 		# get board ids
-		if @board_ids.empty?
+		if !@board_ids.empty?
 			return @board_ids
 		else
 			board_ids = Set.new()
 			@organizations.each do |org|
-				uri =  "https://api.trello.com/1/organizations/"
+				uri =  "/1/organizations/"
 				uri += org
 				uri += "/boards/"
 				uri += @board_filter + "?"
-				response = Net::HTTP.new("api.trello.com", @port)
-				response.use_ssl = true
-				response = response.request_get(uri, {"Connection" => "close"})
-				response = JSON.load(response)
+				uri += "&key="       + @key
+				uri += "&token="     + @token
+				response = issue_request(uri)
 				response.each do |item|
-					boards_ids.add(item["shortLink"])
+					board_ids.add(item["shortLink"])
 				end
 			end
 			return board_ids
@@ -562,13 +589,14 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		uri += "&action_member_fields="        + @action_member_fields
 		uri += "&action_memberCreator="        + @action_member_creator
 		uri += "&action_memberCreator_fields=" + @action_member_creator_fields
+		uri += "&fields="                      + @board_fields
+		uri += "&board_stars="                 + @board_stars		
 		uri += "&cards="                       + @cards
 		uri += "&card_fields="                 + @card_fields
 		uri += "&card_attachments="            + @card_attachments
 		uri += "&card_attachment_fields="      + @card_attachment_fields
 		uri += "&card_checklists="             + @card_checklists
 		uri += "&card_stickers="               + @card_stickers
-		uri += "&board_stars="                 + @board_stars
 		uri += "&labels="                      + @labels
 		uri += "&label_fields="                + @label_fields
 		uri += "&labels_limit="                + @labels_limit
@@ -587,7 +615,6 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		uri += "&organization_fields="         + @organization_fields
 		uri += "&organization_memberships="    + @organization_memberships
 		uri += "&myPrefs="                     + @my_prefs
-		uri += "&field="                       + @field
 		uri += "&key="                         + @key
 		uri += "&token="                       + @token
 		return uri
@@ -665,6 +692,19 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		return output
 	end
 
+	private
+	def issue_request(uri)
+		response = Net::HTTP.new("api.trello.com", @port)
+		response.use_ssl = true
+		response = response.request_get(uri, {"Connection" => "close"})
+		code = response.code.to_i()
+		if 199 < code and code < 300
+			return JSON.load(response.body)
+		else
+			raise NET::HTTPError.new(response)
+		end
+	end
+
 	public
 	def run(queue)
 		limit = 10000 #larger than trello allows
@@ -675,24 +715,20 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 		end
 		# begin
 		Stud.interval(@interval) do
-			@_board_ids.each do |board_id|
+			_board_ids.each do |board_id|
 				uri = get_uri(board_id)
-
-				response = Net::HTTP.new("api.trello.com", @port)
-				response.use_ssl = true
-				response = response.request_get(uri, {"Connection" => "close"})
-				code = response.code.to_i()
-				if 199 < code and code < 300
-					response = JSON.parse(response.body)					
-					if response[@entities].length > 0
+				response = issue_request(uri)
+				@entities.each do |entity|
+					if response[entity].length > 0
 						# add events to queue
-						response[@entities].each do |data|
+						response[entity].each do |data|
 							data = coerce_nulls(data)
 							data = reduce_data(data)
 							if @snake_case
 								data = to_snake_case(data)
 							end
 							event = LogStash::Event.new("host" => @host)
+							data['entity'] = entity[0..-2]
 							data.each do |key, val|
 								event[key] = val
 							end
@@ -700,13 +736,11 @@ class LogStash::Inputs::Trello_Boards < LogStash::Inputs::Base
 							queue << event
 						end
 					end
-					if response[@entities].length == limit
+					if response[entity].length == limit
 						next
 					else
 						break
 					end
-				else
-					raise NET::HTTPError.new(response.body())
 				end
 			end
 		end

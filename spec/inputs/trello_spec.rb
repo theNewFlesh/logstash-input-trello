@@ -2,7 +2,7 @@
 require "logstash/devutils/rspec/spec_helper"
 # require "logstash/inputs/trello"
 
-# describe LogStash::Inputs::Units do
+# describe LogStash::Inputs::Trello do
 # 	describe "test 1" do
 # 		let(:config) do <<-CONFIG
 # 			input {

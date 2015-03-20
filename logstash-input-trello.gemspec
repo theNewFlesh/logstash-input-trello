@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
 
-	s.name            = 'logstash-input-trello_boards'
+	s.name            = 'logstash-input-trello'
 	s.version         = '0.1.0'
 	s.licenses        = ['Apache License (2.0)']
 	s.summary         = "A plugin for retrieving cards from Trello."
