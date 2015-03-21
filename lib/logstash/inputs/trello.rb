@@ -28,6 +28,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	config(:entities, :validate => :array, :required => true, :default => ["all"])
 		# valid values:
+		# 	all
 		#	membersInvited
 		#	labels
 		#	lists
@@ -110,14 +111,9 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	true
 		# 	false
 
-	config(:actions_format, :validate => :string, :default => "list")
+	config(:actions_since, :validate => :string, :default => "last query")
 		# valid values:
-		# 	count
-		# 	list
-		# 	minimal
-
-	config(:actions_since, :validate => :string, :default => "null")
-		# valid values:
+		# 	last query
 		# 	a date
 		# 	null
 		# 	lastView
@@ -504,18 +500,17 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 		if @entities == ["all"]
 			@entities = ["cards", "lists", "labels", "actions"]
+			# members_invited
+			# memberships
+			# members
+			# checkists
 		end
-		# members_invited
-		# memberships
-		# members
-		# checkists
 
 		@host = Socket.gethostname
 		@board_filter                 = array_to_uri(@board_filter)
 
 		@actions                      = array_to_uri(@actions)
 		@actions_entities             = @actions_entities.to_s()
-		@actions_format               = @actions_format
 		@actions_since                = @actions_since
 		@actions_limit                = @actions_limit.to_s()
 		@action_fields                = array_to_uri(@action_fields)
@@ -581,7 +576,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		uri += board_id + '?'
 		uri += "actions="                      + @actions
 		uri += "&actions_entities="            + @actions_entities
-		uri += "&actions_format="              + @actions_format
+		uri += "&actions_format="              + "list"
 		uri += "&actions_since="               + @actions_since
 		uri += "&actions_limit="               + @actions_limit
 		uri += "&action_fields="               + @action_fields
@@ -674,8 +669,10 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	end
 
 	private
-	def reduce_data(data)
+	def reduce_data(data, entity)
 		output = {}
+		ent = entity[0..-2]
+		output[ent] = {}
 		data.each do |key, val|
 			if val.is_a?(Array)
 				if val.length > 0
@@ -686,8 +683,19 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 					next
 				end
 			else
+				if ["type", "id", "version"].include?(key)
+					output[ent][key] = val
+				else
+					output[key] = val
+				end
+			end
+		end
+		# remove data field from actions
+		if output.include?("data")
+			output["data"].each do |key, val|
 				output[key] = val
 			end
+			output.delete("data")
 		end
 		return output
 	end
@@ -701,52 +709,51 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		if 199 < code and code < 300
 			return JSON.load(response.body)
 		else
-			raise NET::HTTPError.new(response)
+			@logger.warn("HTTP request error", + response)
+			raise StandardError.new()
+		end
+	end
+
+	private
+	def process_response(response, queue)
+		@entities.each do |entity|
+			if response[entity].length > 0
+				response[entity].each do |data|
+					data = coerce_nulls(data)
+					data = reduce_data(data, entity)
+					if @snake_case
+						data = to_snake_case(data)
+					end
+
+					event = LogStash::Event.new("host" => @host, 
+						"type" => @type + '_' + entity[0..-2])
+					data.each do |key, val|
+						event[key] = val
+					end
+					decorate(event)
+					queue << event
+				end
+			end
 		end
 	end
 
 	public
 	def run(queue)
-		limit = 10000 #larger than trello allows
-		if @entities == "labels"
-			limit = @labels_limit.to_i()
-		elsif @entities == "actions"
-			limit = @actions_limit.to_i()
-		end
-		# begin
 		Stud.interval(@interval) do
+			if @actions_since == "last query"
+				temp = Time.now - @interval
+				@actions_since = temp.strftime('%Y-%m-%dT%H:%M:%S%z')
+			end
 			_board_ids.each do |board_id|
 				uri = get_uri(board_id)
-				response = issue_request(uri)
-				@entities.each do |entity|
-					if response[entity].length > 0
-						# add events to queue
-						response[entity].each do |data|
-							data = coerce_nulls(data)
-							data = reduce_data(data)
-							if @snake_case
-								data = to_snake_case(data)
-							end
-							event = LogStash::Event.new("host" => @host)
-							data['entity'] = entity[0..-2]
-							data.each do |key, val|
-								event[key] = val
-							end
-							decorate(event)
-							queue << event
-						end
-					end
-					if response[entity].length == limit
-						next
-					else
-						break
-					end
+				response = nil
+				begin
+					response = issue_request(uri)
+				rescue
+					next
 				end
+				process_response(response, queue)
 			end
 		end
-		# rescue Logstash::ShutdownSignal
-		# 	event.cancel()
-		# 	@logger.debug(e)
-		# end
 	end
 end
