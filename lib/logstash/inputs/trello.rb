@@ -694,7 +694,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 				end
 			end
 		end
-		# remove data field from actions
+		# remove data field from entities that have one (ie actions)
 		if output.include?("data")
 			output["data"].each do |key, val|
 				output[key] = val
@@ -728,9 +728,19 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 					if @snake_case
 						data = to_snake_case(data)
 					end
-
-					event = LogStash::Event.new("host" => @host, 
-						"type" => @type + '_' + entity[0..-2])
+					event = nil
+					# set the timestamp of actions to their date field
+					if entity == "actions"
+						timestamp = data["date"]
+						data.delete("date")
+						event = LogStash::Event.new(
+							"host" => @host, 
+							"type" => @type + '_' + entity[0..-2],
+							"@timestamp" => timestamp)
+					else
+						event = LogStash::Event.new("host" => @host, 
+							"type" => @type + '_' + entity[0..-2])
+					end
 					data.each do |key, val|
 						event[key] = val
 					end
@@ -751,7 +761,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 				response = nil
 				begin
 					response = issue_request(uri)
-				rescue
+				rescue StandardError
 					next
 				end
 				process_response(response, queue)
