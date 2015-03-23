@@ -570,14 +570,18 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	end
 
 	private
-	def get_uri(board_id)
+	def get_uri(board_id, query_time)
+		actions_since = @actions_since
+		if @actions_since == "last query"
+			actions_since = query_time
+		end
 		# construct uri
 		uri =  "/1/boards/"
 		uri += board_id + '?'
 		uri += "actions="                      + @actions
 		uri += "&actions_entities="            + @actions_entities
 		uri += "&actions_format="              + "list"
-		uri += "&actions_since="               + @actions_since
+		uri += "&actions_since="               + actions_since
 		uri += "&actions_limit="               + @actions_limit
 		uri += "&action_fields="               + @action_fields
 		uri += "&action_member="               + @action_member
@@ -739,13 +743,11 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	public
 	def run(queue)
+		query_time = Time.now - @interval
+		query_time = query_time.strftime('%Y-%m-%dT%H:%M:%S%z')
 		Stud.interval(@interval) do
-			if @actions_since == "last query"
-				temp = Time.now - @interval
-				@actions_since = temp.strftime('%Y-%m-%dT%H:%M:%S%z')
-			end
 			_board_ids.each do |board_id|
-				uri = get_uri(board_id)
+				uri = get_uri(board_id, query_time)
 				response = nil
 				begin
 					response = issue_request(uri)
@@ -754,6 +756,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 				end
 				process_response(response, queue)
 			end
+			query_time = Time.now.strftime('%Y-%m-%dT%H:%M:%S%z')
 		end
 	end
 end
