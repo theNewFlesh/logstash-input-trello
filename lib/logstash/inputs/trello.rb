@@ -687,7 +687,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 					next
 				end
 			else
-				if ["type", "id", "version"].include?(key)
+				if ["type", "id", "version", "name"].include?(key)
 					output[ent][key] = val
 				else
 					output[key] = val
@@ -695,7 +695,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 			end
 		end
 		# remove data field from entities that have one (ie actions)
-		if output.include?("data")
+		if output.has_key?("data")
 			output["data"].each do |key, val|
 				output[key] = val
 			end
@@ -718,21 +718,80 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		end
 	end
 
+	# private
+	# def create_inverted_index(data, func)
+	# 	output = {}
+	# 	data.each { |item| output[func.call(item)] = item }
+	# 	return output
+	# end
+
+	# private
+	# def substitute_entity(data, entity, index, func)
+	# 	for item in data
+	# 		id = func.call(item)
+	# 		data[entity] = index[id]
+	# 	end
+	# 	return data
+	# end
+
+	# private
+	# def conform_cards(data)
+	# 	index = create_inverted_index()
+	# 	substitute_entity(data, "list", )
+	# end
+
 	private
 	def process_response(response, queue)
+		# create board data
+		board_fields = [ 'closed',
+						 'dateLastActivity',
+						 'dateLastView',
+						 'desc',
+						 'descData',
+						 'id',
+						 'idOrganization',
+						 'invited',
+						 'labelNames',
+						 'name',
+						 'pinned',
+						 'prefs',
+						 'shortLink',
+						 'shortUrl',
+						 'starred',
+						 'subscribed',
+						 'url']
+		board = {}
+		board_fields.each do |field|
+			if response.has_key?(field)
+				board[field] = response[field]
+			end
+		end
+
 		@entities.each do |entity|
 			if response[entity].length > 0
 				response[entity].each do |data|
 					data = coerce_nulls(data)
 					data = reduce_data(data, entity)
+					
+					# incorporate board data
+					if data.has_key?("board")
+						board.each do |key, val|
+							if not data["board"].has_key?(key)
+								data["board"][key] = val
+							end
+						end
+					else
+						data["board"] = board
+					end
+
 					if @snake_case
 						data = to_snake_case(data)
 					end
 					event = nil
 					# set the timestamp of actions to their date field
 					if entity == "actions"
-						timestamp = data["date"]
-						data.delete("date")
+						timestamp = data["action"]["date"]
+						data["action"].delete("date")
 						event = LogStash::Event.new(
 							"host" => @host, 
 							"type" => @type + '_' + entity[0..-2],
