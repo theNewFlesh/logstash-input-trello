@@ -45,7 +45,17 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		"organization",
 		"powerup"
 	]
-	
+
+	@@plural_ids = [
+		"idChecklists",
+		"idLabels",
+		"idMembers"
+	]
+
+	@@singular_ids = [
+		"idBoard",
+		"idList"
+	]
 
 	default(:codec, "json_lines")
 		# defualt: json_lines
@@ -724,6 +734,12 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	private
 	def clean_data(data)
+		def normalize(item)
+			output = item.gsub('^id', '')
+			output = output[0].downcase + output[1..-1]
+			return output
+		end
+
 		# remove actions data field
 		if data.has_key?("data")
 			data["data"].each do |key, val|
@@ -734,19 +750,49 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		if data.has_key?("board")
 			data.delete("board")
 		end
+
+		# replace id... keys with entity equivalents 
+		data.each do |key, val|
+			if @@singular_ids.include?(key)
+				data[normalize(key)] = {"id" => val}
+				data.delete(key)
+
+			elsif @@plural_ids.include?(key)
+				data[normalize(key)] = { "__reduce_ids" => val }
+				data.delete(key)
+			end
+		end
 		return data
 	end
 	
 	public
 	def expand_entities(data, lut)
+		def test(val)
+			if val.is_a?(Hash)
+				if val.has_key?("__reduce_ids")
+					return true
+				end
+			end
+			return false
+		end
+
 		func = lambda do |store, key, val|
-			if @@plural_entities.include?(key)
-				# reduce stubs
-#                 temp = depluralize(val)
+			if test(val)
+				temp = val
+				if test(val)
+					temp = []
+					val["__reduce_ids"].each do |id|
+						temp.push( lut[pluralize(key) ][id] )
+					end
+				end
+				return reduce(temp)
+
+			elsif @@plural_entities.include?(key)
 				return reduce(val)
+
 			elsif @@singular_entities.include?(key) and val.has_key?("id")
-				# expand single stub
-				return lut[key + "s"][ val["id"] ]
+				return lut[pluralize(key)][ val["id"] ]
+			
 			else
 				return val
 			end
@@ -769,56 +815,56 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	end
 
 	private
-	def depluralize(data)
-		func = lambda do |store, key, val|
-			if @@plural_entities.include?(key)
-				store[key[0..-2]] = val
-				store.delete(key)
-			end
-			return store
-		end
-		return recurse(data, func, true)
+	def depluralize(item)
+		return item.gsub(/s$/, "")
+	end
+
+	private
+	def pluralize(item)
+		output = item.gsub(/s$/, "")
+		return item + "s"
 	end
 
 	private
 	def coerce_nulls(data)
-		func = lambda do |store, key, val|
-			if val == ""
-				store[key] = nil
+		data.each do |index, item|
+			if item == ""
+				item == nil
 			end
-			return store
 		end
-		recurse(data, func, true)
+		return data
 	end
 
 	private
 	def reduce(data)
-		prototype = {}
-		data.each do |entry|
-			entry.each do |key, val|
-				prototype[key] = []
-			end
-		end
-		data.each do |entry|
-			entry.each do |key, val|
-				if val != "" and !val.nil?
-					prototype[key].push(val)
+		def _reduce(data)
+			prototype = {}
+			data.each do |entry|
+				entry.each do |key, val|
+					prototype[key] = []
 				end
 			end
+			data.each do |entry|
+				entry.each do |key, val|
+					if val != "" and !val.nil?
+						prototype[key].push(val)
+					end
+				end
+			end
+			return prototype
 		end
-		return prototype
-	end
 
-	private
-	def reduce_data(data)
-		data.each do |key, val|
-			if val.is_a?(Array) and val.length > 0
-				if val[0].is_a?(Hash)
-					data[key] = reduce(val)
+		# ensure the proper data structure
+		if data.is_a?(Array)
+			if not data.empty?
+				if data[0].is_a?(Hash)
+					return _reduce(data)
 				end
 			end
+		else
+			# return data if data structure is wrong
+			return data
 		end
-		return data
 	end
 
 	private
@@ -832,13 +878,45 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 			return output
 		end
 
-		output = {}
-		data.each do |key, val|
-			if val.is_a?(Hash)
-				output[_to_snake_case(key)] = to_snake_case(val)
-			else
-				output[_to_snake_case(key)] = val
+		data.select { |index, item| index.map! { |item| _to_snake_case(item) } }
+		return data
+	end
+
+	private
+	def nested_hash_to_matrix(data)
+		@sep = '.'
+		@output = []
+		def _nested_hash_to_matrix(data, name)
+			data.each do |key, val|
+				new_key = name + @sep + key.to_s
+				if val.is_a?(Hash) and val != {}
+					_nested_hash_to_matrix(val, new_key)
+				else
+					@output.push([new_key, val])
+				end
 			end
+			return @output
+		end
+
+		@output = _nested_hash_to_matrix(data, @sep)
+		@output = @output.map { |key, val| [key.split('.')[2..-1], val] }
+		return @output
+	end
+
+	private
+	def matrix_to_nested_hash(data)
+		output = {}
+		data.each do |keys, value|
+			cursor = output
+			for key in keys[0..-2]
+				if !cursor.include?(key)
+					cursor[key] = {}
+					cursor = cursor[key]
+				else
+					cursor = cursor[key]
+				end
+			end
+			cursor[keys[-1]] = value
 		end
 		return output
 	end
@@ -856,13 +934,13 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 					data = clean_data(entity)
 					data = expand_entities(data, lut)
 					data = collapse(data, singular, @@singular_entities)
-#                     data = depluralize(data)
 					data["board"] = response["board"]
-					# data = coerce_nulls(data)
-					# data = reduce_data(data)
-					# if @snake_case
-					# 	data = to_snake_case(data)
-					# end
+					data = nested_hash_to_matrix(data)
+					data = coerce_nulls(data)
+					if @snake_case
+						data = to_snake_case(data)
+					end
+					data = matrix_to_nested_hash(data)
 					event = nil
 					# set the timestamp of actions to their date field
 					if singular == "action"
