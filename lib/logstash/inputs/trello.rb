@@ -9,6 +9,7 @@ require 'net/http'
 require 'json'
 require 'time'
 require 'set'
+# ------------------------------------------------------------------------------
 
 # The trello filter is used querying the trello database and returning the resulting
 # cards as events
@@ -16,6 +17,35 @@ require 'set'
 class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	config_name "trello"
 	milestone 1
+
+	@@plural_entities = [
+		"actions",
+		"boards",
+		"cards",
+		"checklists",
+		"invitations",
+		"labels",
+		"lists",
+		"members",
+		"memberships",
+		"organizations",
+		"powerups"
+	]
+		
+	@@singular_entities = [
+		"action",
+		"board",
+		"card",
+		"checklist",
+		"invitation",
+		"label",
+		"list",
+		"member",
+		"membership",
+		"organization",
+		"powerup"
+	]
+	
 
 	default(:codec, "json_lines")
 		# defualt: json_lines
@@ -52,7 +82,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	config(:token, :validate => :string, :required => true)
 		# oauth secret
-
+	# --------------------------------------------------------------------------
+	
 	config(:actions, :validate => :array, :default => ["all"])
 		# valid values:
 		# 	all
@@ -181,7 +212,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	status
 		# 	url
 		# 	username
-
+	# --------------------------------------------------------------------------
+	
 	config(:board_ids, :validate => :array, :default => [])
 		# ids of boards to be queried
 
@@ -237,6 +269,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# valid values:
 		# 	mine
 		# 	none
+	# --------------------------------------------------------------------------
 
 	# CONFIG WITH ENTITIES
 	config(:cards, :validate => :string, :default => "all")
@@ -302,6 +335,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# valid values:
 		# 	true
 		# 	false
+	# --------------------------------------------------------------------------
 
 	# CONFIG WITH ENTITIES
 	config(:labels, :validate => :string, :default => "all")
@@ -320,7 +354,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	config(:labels_limit, :validate => :number, :default => 50)
 		# valid values:
 		# 	a number from 0 to 1000
-	
+	# --------------------------------------------------------------------------
+
 	# CONFIG WITH ENTITIES
 	config(:lists, :validate => :string, :default => "all")
 		# valid values:
@@ -337,6 +372,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	name
 		# 	pos
 		# 	subscribed
+	# --------------------------------------------------------------------------
 
 	# CONFIG WITH ENTITIES
 	config(:memberships, :validate => :array, :default => ["all"])
@@ -430,7 +466,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	status
 		# 	url
 		# 	username
-
+	# --------------------------------------------------------------------------
+	
 	# CONFIG WITH ENTITIES
 	config(:checklists, :validate => :string, :default => "all")
 		# valid values:
@@ -444,6 +481,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	idCard
 		# 	name
 		# 	pos
+	# --------------------------------------------------------------------------
 
 	# CONFIG WITH ENTITIES
 	config(:organization, :validate => :boolean, :default => false)
@@ -481,12 +519,14 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	deactivated
 		# 	me
 		# 	normal
+	# --------------------------------------------------------------------------
 
 	# CONFIG WITH ENTITIES
 	config(:my_prefs, :validate => :boolean, :default => false)
 		# valid values:
 		# 	true
 		# 	false
+	# --------------------------------------------------------------------------
 
 	public
 	def register()
@@ -499,11 +539,19 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		end
 
 		if @entities == ["all"]
-			@entities = ["cards", "lists", "labels", "actions"]
-			# members_invited
-			# memberships
-			# members
-			# checkists
+			@entities =	[
+				"actions",
+				"boards",
+				"cards",
+				# "checklists",
+				# "invitations",
+				"labels",
+				"lists",
+				"members"
+				# "memberships",
+				# "organizations",
+				# "powerups"
+			]
 		end
 
 		@host = Socket.gethostname
@@ -620,16 +668,157 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	end
 
 	private
-	def coerce_nulls(data)
-		output = {}
-		data.each do |key, val|
-			if val == ""
-				output[key] = nil
+	def issue_request(uri)
+		response = Net::HTTP.new("api.trello.com", @port)
+		response.use_ssl = true
+		response = response.request_get(uri, {"Connection" => "close"})
+		code = response.code.to_i()
+		if 199 < code and code < 300
+			return JSON.load(response.body)
+		else
+			@logger.warn("HTTP request error", + response)
+			raise StandardError.new()
+		end
+	end
+	# --------------------------------------------------------------------------
+	private
+	def create_lut(data)
+		# This cannot be done recursively because a recursive func will pick up
+		# stubs
+		lut = {}
+		@@plural_entities.map { |entity| lut[entity] = {} }
+		
+		data.each do |key, entities|
+			if lut.has_key?(key)
+				entities.each do |entity|
+					lut[key][ entity["id"] ] = entity
+				end
+			end
+		end
+		return lut
+	end
+
+	public
+	def recurse(data, func, capture_unprocessed = false)
+		store = {}
+		def _recurse(data, store, func, capture_unprocessed)
+			data.each do |key, val|
+				if val.is_a?(Hash)
+					# logic goes here
+					result = func.call(store, key, val)
+					if result
+						store[key] = result
+					else
+						store[key] = _recurse(val, store, func, capture_unprocessed)
+					end
+				else
+					if capture_unprocessed
+						store[key] = val
+					end
+				end
+			end
+		end
+		_recurse(data, store, func, capture_unprocessed)
+		return store
+	end
+
+	private
+	def clean_data(data)
+		# remove actions data field
+		if data.has_key?("data")
+			data["data"].each do |key, val|
+				data[key] = val
+			end
+			data.delete("data")
+		end
+		if data.has_key?("board")
+			data.delete("board")
+		end
+		return data
+	end
+	
+	public
+	def expand_entities(data, lut)
+		func = lambda do |store, key, val|
+			if @@plural_entities.include?(key)
+				# reduce stubs
+#                 temp = depluralize(val)
+				return reduce(val)
+			elsif @@singular_entities.include?(key) and val.has_key?("id")
+				# expand single stub
+				return lut[key + "s"][ val["id"] ]
 			else
+				return val
+			end
+		end
+		return recurse(data, func, true)
+	end
+	
+	private
+	def collapse(data, source, entities)
+		# entities might be drawn from lut.keys()
+		output = { source => {} }
+		data.each do |key, val|
+			if entities.include?(key)
 				output[key] = val
+			else
+				output[source][key] = val
 			end
 		end
 		return output
+	end
+
+	private
+	def depluralize(data)
+		func = lambda do |store, key, val|
+			if @@plural_entities.include?(key)
+				store[key[0..-2]] = val
+				store.delete(key)
+			end
+			return store
+		end
+		return recurse(data, func, true)
+	end
+
+	private
+	def coerce_nulls(data)
+		func = lambda do |store, key, val|
+			if val == ""
+				store[key] = nil
+			end
+			return store
+		end
+		recurse(data, func, true)
+	end
+
+	private
+	def reduce(data)
+		prototype = {}
+		data.each do |entry|
+			entry.each do |key, val|
+				prototype[key] = []
+			end
+		end
+		data.each do |entry|
+			entry.each do |key, val|
+				if val != "" and !val.nil?
+					prototype[key].push(val)
+				end
+			end
+		end
+		return prototype
+	end
+
+	private
+	def reduce_data(data)
+		data.each do |key, val|
+			if val.is_a?(Array) and val.length > 0
+				if val[0].is_a?(Hash)
+					data[key] = reduce(val)
+				end
+			end
+		end
+		return data
 	end
 
 	private
@@ -653,152 +842,39 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		end
 		return output
 	end
-
-	private
-	def reduce(data)
-		prototype = {}
-		data.each do |entry|
-			entry.each do |key, val|
-				prototype[key] = []
-			end
-		end
-		data.each do |entry|
-			entry.each do |key, val|
-				if val != "" and !val.nil?
-					prototype[key].push(val)
-				end
-			end
-		end
-		return prototype
-	end
-
-	private
-	def reduce_data(data, entity)
-		output = {}
-		ent = entity[0..-2]
-		output[ent] = {}
-		data.each do |key, val|
-			if val.is_a?(Array)
-				if val.length > 0
-					if val[0].is_a?(Hash)
-						output[key] = reduce(val)
-					end
-				else 
-					next
-				end
-			else
-				if ["type", "id", "version", "name"].include?(key)
-					output[ent][key] = val
-				else
-					output[key] = val
-				end
-			end
-		end
-		# remove data field from entities that have one (ie actions)
-		if output.has_key?("data")
-			output["data"].each do |key, val|
-				output[key] = val
-			end
-			output.delete("data")
-		end
-		return output
-	end
-
-	private
-	def issue_request(uri)
-		response = Net::HTTP.new("api.trello.com", @port)
-		response.use_ssl = true
-		response = response.request_get(uri, {"Connection" => "close"})
-		code = response.code.to_i()
-		if 199 < code and code < 300
-			return JSON.load(response.body)
-		else
-			@logger.warn("HTTP request error", + response)
-			raise StandardError.new()
-		end
-	end
-
-	# private
-	# def create_inverted_index(data, func)
-	# 	output = {}
-	# 	data.each { |item| output[func.call(item)] = item }
-	# 	return output
-	# end
-
-	# private
-	# def substitute_entity(data, entity, index, func)
-	# 	for item in data
-	# 		id = func.call(item)
-	# 		data[entity] = index[id]
-	# 	end
-	# 	return data
-	# end
-
-	# private
-	# def conform_cards(data)
-	# 	index = create_inverted_index()
-	# 	substitute_entity(data, "list", )
-	# end
+	# --------------------------------------------------------------------------
 
 	private
 	def process_response(response, queue)
-		# create board data
-		board_fields = [ 'closed',
-						 'dateLastActivity',
-						 'dateLastView',
-						 'desc',
-						 'descData',
-						 'id',
-						 'idOrganization',
-						 'invited',
-						 'labelNames',
-						 'name',
-						 'pinned',
-						 'prefs',
-						 'shortLink',
-						 'shortUrl',
-						 'starred',
-						 'subscribed',
-						 'url']
-		board = {}
-		board_fields.each do |field|
-			if response.has_key?(field)
-				board[field] = response[field]
-			end
-		end
+		response = collapse(response, "board", @@plural_entities)
+		lut = create_lut(response)
 
-		@entities.each do |entity|
-			if response[entity].length > 0
-				response[entity].each do |data|
-					data = coerce_nulls(data)
-					data = reduce_data(data, entity)
-					
-					# incorporate board data
-					if data.has_key?("board")
-						board.each do |key, val|
-							if not data["board"].has_key?(key)
-								data["board"][key] = val
-							end
-						end
-					else
-						data["board"] = board
-					end
-
-					if @snake_case
-						data = to_snake_case(data)
-					end
+		@entities.each do |ent_type|
+			if response.has_key?(ent_type)
+				response[ent_type].each do |entity|
+					singular = ent_type[0..-2]
+					data = clean_data(entity)
+					data = expand_entities(data, lut)
+					data = collapse(data, singular, @@singular_entities)
+#                     data = depluralize(data)
+					data["board"] = response["board"]
+					# data = coerce_nulls(data)
+					# data = reduce_data(data)
+					# if @snake_case
+					# 	data = to_snake_case(data)
+					# end
 					event = nil
 					# set the timestamp of actions to their date field
-					if entity == "actions"
+					if singular == "action"
 						timestamp = data["action"]["date"]
 						data["action"].delete("date")
 						event = LogStash::Event.new(
 							"host" => @host, 
-							"type" => @type + '_' + entity[0..-2],
+							"type" => @type + '_' + singular,
 							"@timestamp" => timestamp)
 					else
 						event = LogStash::Event.new("host" => @host, 
-							"type" => @type + '_' + entity[0..-2])
+							"type" => @type + '_' + singular)
 					end
 					data.each do |key, val|
 						event[key] = val
