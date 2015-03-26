@@ -789,7 +789,6 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		end
 
 		func = lambda do |store, key, val|
-			print key + ' : ' + val.class.to_s, "\n"
 			if test(val)
 				output = nil
 				ids = val[1]
