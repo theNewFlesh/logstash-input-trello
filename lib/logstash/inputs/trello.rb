@@ -569,7 +569,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 		@actions                      = array_to_uri(@actions)
 		@actions_entities             = @actions_entities.to_s()
-		@actions_since                = @actions_since
+		# @actions_since                = @actions_since
 		@actions_limit                = @actions_limit.to_s()
 		@action_fields                = array_to_uri(@action_fields)
 		@action_member                = @action_member.to_s()
@@ -577,26 +577,26 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		@action_member_creator        = @action_member_creator.to_s()
 		@action_member_creator_fields = array_to_uri(@action_member_creator_fields)
 		@board_fields                 = array_to_uri(@board_fields)
-		@board_stars                  = @board_stars
-		@cards                        = @cards
+		# @board_stars                  = @board_stars
+		# @cards                        = @cards
 		@card_fields                  = array_to_uri(@card_fields)
 		@card_attachments             = @card_attachments.to_s()
 		@card_attachment_fields       = array_to_uri(@card_attachment_fields)
 		@card_checklists              = @card_checklists
 		@card_stickers                = @card_stickers.to_s()
-		@labels                       = @labels
+		# @labels                       = @labels
 		@label_fields                 = array_to_uri(@label_fields)
 		@labels_limit                 = @labels_limit.to_s()
-		@lists                        = @lists
+		# @lists                        = @lists
 		@list_fields                  = array_to_uri(@list_fields)
 		@memberships                  = array_to_uri(@memberships)
 		@memberships_member           = @memberships_member.to_s()
 		@memberships_member_fields    = array_to_uri(@memberships_member_fields)
-		@members                      = @members
+		# @members                      = @members
 		@member_fields                = array_to_uri(@member_fields)
-		@members_invited              = @members_invited
+		# @members_invited              = @members_invited
 		@members_invited_fields       = array_to_uri(@members_invited_fields)
-		@checklists                   = @checklists
+		# @checklists                   = @checklists
 		@checklist_fields             = array_to_uri(@checklist_fields)
 		@organization                 = @organization.to_s()
 		@organization_fields          = array_to_uri(@organization_fields)
@@ -708,34 +708,38 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		return lut
 	end
 
+	null_func = lambda { |store, key, val| return val }
+
 	public
-	def recurse(data, func, capture_unprocessed = false)
+	def recurse(data, hash_func, func=nil)
+		# null_func = lambda { |store, key, val| return val }
+
 		store = {}
-		def _recurse(data, store, func, capture_unprocessed)
+		def _recurse(data, store, hash_func, func)
 			data.each do |key, val|
 				if val.is_a?(Hash)
 					# logic goes here
-					result = func.call(store, key, val)
+					result = hash_func.call(store, key, val)
 					if result
 						store[key] = result
 					else
-						store[key] = _recurse(val, store, func, capture_unprocessed)
+						store[key] = _recurse(val, store, hash_func, func)
 					end
 				else
-					if capture_unprocessed
-						store[key] = val
+					if not func.nil?
+						store[key] = func.call(store, key, val)
 					end
 				end
 			end
 		end
-		_recurse(data, store, func, capture_unprocessed)
+		_recurse(data, store, hash_func, func)
 		return store
 	end
 
 	private
 	def clean_data(data)
 		def normalize(item)
-			output = item.gsub('^id', '')
+			output = item.gsub(/^id/, '')
 			output = output[0].downcase + output[1..-1]
 			return output
 		end
@@ -752,13 +756,21 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		end
 
 		# replace id... keys with entity equivalents 
-		data.each do |key, val|
+		data.to_a.each do |key, val|
 			if @@singular_ids.include?(key)
 				data[normalize(key)] = {"id" => val}
 				data.delete(key)
 
 			elsif @@plural_ids.include?(key)
-				data[normalize(key)] = { "__reduce_ids" => val }
+				temp = []
+				if not val.empty?
+					if not val.is_a?(Array)
+						temp = [val]
+					else
+						temp = val
+					end
+				end
+				data[normalize(key)] = ["__reduce_ids", temp]
 				data.delete(key)
 			end
 		end
@@ -768,8 +780,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	public
 	def expand_entities(data, lut)
 		def test(val)
-			if val.is_a?(Hash)
-				if val.has_key?("__reduce_ids")
+			if val.is_a?(Array)# and not val.empty?
+				if val[0] == "__reduce_ids"
 					return true
 				end
 			end
@@ -777,15 +789,15 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		end
 
 		func = lambda do |store, key, val|
+			print key + ' : ' + val.class.to_s, "\n"
 			if test(val)
-				temp = val
-				if test(val)
-					temp = []
-					val["__reduce_ids"].each do |id|
-						temp.push( lut[pluralize(key) ][id] )
-					end
+				output = nil
+				ids = val[1]
+				if not ids.empty?
+					ids = ids.map { |id| lut[ pluralize(key) ][id] }
+					output = reduce(ids)
 				end
-				return reduce(temp)
+				return output
 
 			elsif @@plural_entities.include?(key)
 				return reduce(val)
@@ -797,7 +809,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 				return val
 			end
 		end
-		return recurse(data, func, true)
+		return recurse(data, func, func)
 	end
 	
 	private
@@ -822,7 +834,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	private
 	def pluralize(item)
 		output = item.gsub(/s$/, "")
-		return item + "s"
+		return output + "s"
 	end
 
 	private
@@ -924,6 +936,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	private
 	def process_response(response, queue)
+		timestamp = Time.now
+
 		response = collapse(response, "board", @@plural_entities)
 		lut = create_lut(response)
 
@@ -943,17 +957,15 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 					data = matrix_to_nested_hash(data)
 					event = nil
 					# set the timestamp of actions to their date field
+					_timestamp = timestamp
 					if singular == "action"
-						timestamp = data["action"]["date"]
+						_timestamp = data["action"]["date"]
 						data["action"].delete("date")
-						event = LogStash::Event.new(
-							"host" => @host, 
-							"type" => @type + '_' + singular,
-							"@timestamp" => timestamp)
-					else
-						event = LogStash::Event.new("host" => @host, 
-							"type" => @type + '_' + singular)
 					end
+					event = LogStash::Event.new(
+						"host" => @host, 
+						"type" => @type + '_' + singular,
+						"@timestamp" => _timestamp)
 					data.each do |key, val|
 						event[key] = val
 					end
