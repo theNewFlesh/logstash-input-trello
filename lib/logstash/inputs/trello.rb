@@ -29,7 +29,9 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		"members",
 		"memberships",
 		"organizations",
-		"powerups"
+		"powerups",
+		"checkItemStates",
+		"entities"
 	]
 		
 	@@singular_entities = [
@@ -46,6 +48,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		"powerup"
 	]
 
+	@@all_entities = @@singular_entities + @@plural_entities
+
 	@@plural_ids = [
 		"idChecklists",
 		"idLabels",
@@ -56,6 +60,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		"idBoard",
 		"idList"
 	]
+
+	@@all_ids = @@singular_ids + @@plural_ids
 
 	default(:codec, "json_lines")
 		# defualt: json_lines
@@ -147,7 +153,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	updateMember
 		# 	updateOrganization
 
-	config(:actions_entities, :validate => :boolean, :default => false)
+	config(:actions_entities, :validate => :boolean, :default => true)
 		# valid values:
 		# 	true
 		# 	false
@@ -417,7 +423,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	username
 
 	# CONFIG WITH ENTITIES
-	config(:members, :validate => :string, :default => "none")
+	config(:members, :validate => :string, :default => "all")
 		# valid values:
 		# 	admins
 		# 	all
@@ -712,7 +718,9 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	public
 	def recurse(data, hash_func, func=nil)
-		# null_func = lambda { |store, key, val| return val }
+		if func.nil?
+			func = lambda { |store, key, val| return val }
+		end
 
 		store = {}
 		def _recurse(data, store, hash_func, func)
@@ -726,9 +734,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 						store[key] = _recurse(val, store, hash_func, func)
 					end
 				else
-					if not func.nil?
-						store[key] = func.call(store, key, val)
-					end
+					store[key] = func.call(store, key, val)
 				end
 			end
 		end
@@ -737,13 +743,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	end
 
 	private
-	def clean_data(data)
-		def normalize(item)
-			output = item.gsub(/^id/, '')
-			output = output[0].downcase + output[1..-1]
-			return output
-		end
-
+	def clean_data(data, lut)
+		data = data.clone
 		# remove actions data field
 		if data.has_key?("data")
 			data["data"].each do |key, val|
@@ -755,22 +756,13 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 			data.delete("board")
 		end
 
-		# replace id... keys with entity equivalents 
 		data.to_a.each do |key, val|
-			if @@singular_ids.include?(key)
-				data[normalize(key)] = {"id" => val}
-				data.delete(key)
-
-			elsif @@plural_ids.include?(key)
-				temp = []
-				if not val.empty?
-					if not val.is_a?(Array)
-						temp = [val]
-					else
-						temp = val
-					end
-				end
-				data[normalize(key)] = ["__reduce_ids", temp]
+			if @@all_ids.include?(key)
+				# clobber non-id fields with id fields
+				new_key = key.gsub(/^id/, '')
+				new_key = new_key[0].downcase + new_key[1..-1]
+				new_key = pluralize(new_key)
+				data[new_key] = val
 				data.delete(key)
 			end
 		end
@@ -779,31 +771,32 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	
 	public
 	def expand_entities(data, lut)
-		def test(val)
-			if val.is_a?(Array)# and not val.empty?
-				if val[0] == "__reduce_ids"
-					return true
-				end
-			end
-			return false
-		end
-
 		func = lambda do |store, key, val|
-			if test(val)
-				output = nil
-				ids = val[1]
-				if not ids.empty?
-					ids = ids.map { |id| lut[ pluralize(key) ][id] }
-					output = reduce(ids)
+			if @@plural_entities.include?(key)
+				if val.is_a?(Array)
+					if not val.empty?
+						if val[0].is_a?(String)
+							output = []
+							val.each do |id|
+								if lut[key].has_key?(id)
+									output.push(lut[key][id])
+								end
+							end
+							if not output.empty?
+								return reduce(output)
+							end
+						elsif val[0].is_a?(Hash)
+							return reduce(val)
+						end
+					end
+				else
+					return val
 				end
-				return output
-
-			elsif @@plural_entities.include?(key)
-				return reduce(val)
-
 			elsif @@singular_entities.include?(key) and val.has_key?("id")
-				return lut[pluralize(key)][ val["id"] ]
-			
+				l = lut[pluralize(key)]
+				if l.has_key?(val["id"])
+					return l[ val["id"] ]
+				end			
 			else
 				return val
 			end
@@ -942,11 +935,13 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 		@entities.each do |ent_type|
 			if response.has_key?(ent_type)
-				response[ent_type].each do |entity|
+				response[ent_type].each do |source|
 					singular = ent_type[0..-2]
-					data = clean_data(entity)
+					data = clean_data(source, lut)
 					data = expand_entities(data, lut)
-					data = collapse(data, singular, @@singular_entities)
+					all_ent = @@all_entities
+					all_ent.delete("entities")
+					data = collapse(data, singular, all_ent)
 					data["board"] = response["board"]
 					data = nested_hash_to_matrix(data)
 					data = coerce_nulls(data)
@@ -964,7 +959,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 					event = LogStash::Event.new(
 						"host" => @host, 
 						"type" => @type + '_' + singular,
-						"@timestamp" => _timestamp)
+						"@timestamp" => _timestamp,
+						"message" => JSON.dump(source) )
 					data.each do |key, val|
 						event[key] = val
 					end
