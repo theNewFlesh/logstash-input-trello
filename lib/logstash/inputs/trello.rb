@@ -65,9 +65,9 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	@@all_ids = @@singular_ids + @@plural_ids
 	# --------------------------------------------------------------------------
 
-	config(:fields, :validate => :array, :default => ["custom"])
+	config(:fields, :validate => :array, :default => ["default"])
 	config(:filters, :validate => :hash, :default => {})
-	config(:entities, :validate => :array, :default => ["custom"])
+	config(:entities, :validate => :array, :default => ["default"])
 
 	default(:codec, "json_lines")
 		# defualt: json_lines
@@ -99,12 +99,20 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	def register()
 		if @fields == ["all"]
 			@fields == trello_query::PARAM_ALL_FIELDS
+		elsif @fields == ["default"]
+			@fields == trello_query::PARAM_DEFAULT_FIELDS
 		end
+
 		if @filters == ["all"]
 			@filters == trello_query::PARAM_ALL_FILTERS
+		elsif @filters == ["default"]
+			@filters == trello_query::PARAM_DEFAULT_FILTERS
 		end
+		
 		if @entities == ["all"]
 			@entities == trello_query::PARAM_ALL_ENTITIES
+		elsif @entities == ["default"]
+			@entities == trello_query::PARAM_DEFAULT_ENTITIES
 		end
 
 		@trello_query = trello_query::TrelloQuery.new(
