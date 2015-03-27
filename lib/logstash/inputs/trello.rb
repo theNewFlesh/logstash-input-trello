@@ -96,26 +96,41 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	config(:board_ids, :validate => :array, :default => [])
 		# ids of boards to be parsed
+
+	config(:output_types, :validate => :array, :default => ["all"])
 	# --------------------------------------------------------------------------
 
 	public
 	def register()
 		if @fields == ["all"]
-			@fields == TRELLO_QUERY::PARAM_ALL_FIELDS
+			@fields = TRELLO_QUERY::PARAM_ALL_FIELDS
 		elsif @fields == ["default"]
-			@fields == TRELLO_QUERY::PARAM_DEFAULT_FIELDS
+			@fields = TRELLO_QUERY::PARAM_DEFAULT_FIELDS
 		end
 
 		if @filters == ["all"]
-			@filters == TRELLO_QUERY::PARAM_ALL_FILTERS
+			@filters = TRELLO_QUERY::PARAM_ALL_FILTERS
 		elsif @filters == ["default"]
-			@filters == TRELLO_QUERY::PARAM_DEFAULT_FILTERS
+			@filters = TRELLO_QUERY::PARAM_DEFAULT_FILTERS
 		end
 		
 		if @entities == ["all"]
-			@entities == TRELLO_QUERY::PARAM_ALL_ENTITIES
+			@entities = TRELLO_QUERY::PARAM_ALL_ENTITIES
 		elsif @entities == ["default"]
-			@entities == TRELLO_QUERY::PARAM_DEFAULT_ENTITIES
+			@entities = TRELLO_QUERY::PARAM_DEFAULT_ENTITIES
+		end
+
+		if @output_type == ["all"]
+			@output_types = [
+						"board",
+						"memberships",
+						"labels",
+						"cards",
+						"lists",
+						"members",
+						"checklists",
+						"actions"
+			]
 		end
 
 		@trello_query = TRELLO_QUERY::TrelloQuery.new(
@@ -368,22 +383,18 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		response = collapse(response, "board", @@plural_entities)
 		lut = create_lut(response)
 
-		@entities.each do |ent_type|
-			if response.has_key?(ent_type)
-				response[ent_type].each do |source|
-					singular = ent_type[0..-2]
-					# puts JSON.dump(source), "\n"
+		@output_types.each do |out_type|
+			if response.has_key?(out_type)
+				response[out_type].each do |source|
+					singular = out_type[0..-2]
 					data = clean_data(source, lut)
-					# puts JSON.dump(data), "\n"
 					data = expand_entities(data, lut)
-					# puts JSON.dump(data), "\n"
 					all_ent = @@all_entities
 					all_ent.delete("entities")
 					data = collapse(data, singular, all_ent)
-					# puts JSON.dump(data), "\n"
 					
 					# shuffle board info into data
-					if ["members"].include?(ent_type)
+					if ["members"].include?(out_type)
 						data["board"] = response["board"]
 					end
 					
