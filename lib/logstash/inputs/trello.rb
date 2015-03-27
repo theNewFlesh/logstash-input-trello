@@ -133,16 +133,14 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 			]
 		end
 
-		@trello_query = TRELLO_QUERY::TrelloQuery.new(
-			{
-				"organizations" => @organizations,
-				"key"           => @key,
-				"token"         => @token,
-				"board_ids"     => @board_ids,
-				"fields"        => @fields,
-				"entities"      => @entities,
-				"filters"       => @filters,
-				"port"          => @port
+		@trello_query = TrelloQuery::QueryClient.new({
+				organizations: @organizations,
+				token: @token,
+				board_ids: @board_ids,
+				fields: @fields,
+				entities: @entities,
+				filters: @filters,
+				port: @port
 			})
 	end
 	# --------------------------------------------------------------------------

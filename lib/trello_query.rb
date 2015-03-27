@@ -1,101 +1,118 @@
 # encoding: utf-8
 
-require "socket"
-require 'addressable/uri'
+require 'socket'
 require 'net/http'
 require 'json'
 require 'set'
+require 'URI'
 
-module TRELLO_QUERY
-	class TrelloQuery
+module TrelloQuery
+
+	class QueryClient
+	public
+		# accessors
+		attr_accessor :filters, :fields, :entities, :parameters, :host, :port, :organizations,
+					  :key, :token, :board_ids, :token, :board_ids
+
 		def initialize( kwargs={
-							"organizations" => [],
-							"key"           => nil,
-							"token"         => nil,
-							"board_ids"     => [],
-							"fields"        => PARAM_DEFAULT_FIELDS,
-							"entities"      => PARAM_DEFAULT_ENTITIES,
-							"filters"       => {},
-							"port"          => 443
+							:organizations => [],  # an array of organizations from which to derive board ids
+							:key           => nil,  # oauth key
+							:token         => nil,  # oauth secret
+							:board_ids     => [],
+							:fields        => PARAM_DEFAULT_FIELDS,
+							:entities      => PARAM_DEFAULT_ENTITIES,
+							:filters       => {},
+							:port          => 443  # The port trello listens on for REST requests
 						})
 
-			organizations = kwargs["organizations"]
-			key           = kwargs["key"]
-			token         = kwargs["token"]
-			board_ids     = kwargs["board_ids"]
-			fields        = kwargs["fields"]
-			entities      = kwargs["entities"]
-			filters       = kwargs["filters"]
-			port          = kwargs["port"]
-
-			@_host = Socket.gethostname
-			@_port = port
-				# The port trello listens on for REST requests
-			@_organizations = organizations
-				# an array of organizations from which to derive board ids
-			@_key = key
-				# oauth key
-			@_token = token
-				# oauth secret
-
+			@organizations = kwargs[:organizations]
+			@key = kwargs[:key]
+			@token = kwargs[:token]
+			@filters = kwargs[:filters]
+			@port = kwargs[:port]  
+			@host = Socket.gethostname
+				
 			board_filter = "all"
-			if not filters.empty?
-				if filters.has_key?("boards")
-					if not filters["boards"].empty?
-						board_filter = array_to_uri( filters["boards"] )
-					end
+			if @filters.has_key?("boards")
+				if not @filters["boards"].empty?
+					board_filter = array_to_uri(@filters["boards"])
 				end
 			end
-			
-			if not board_ids.empty?
-				@_board_ids = get_board_ids(board_ids, board_filter)
-			else
-				@board_ids = board_ids
+
+			@board_ids = kwargs[:board_ids]
+			if not @board_ids.empty?
+				@board_ids = get_board_ids(@board_ids, board_filter)
 			end
 
 			# create fields hash
-			new_fields = ALL_FIELDS.clone
-			new_fields.to_a.each do |key, val|
-				fields.each do |field|
+			@fields = ALL_FIELDS.clone
+			@fields.to_a.each do |key, val|
+				kwargs[:fields].each do |field|
 					if not val.include?(field)
-						new_fields[key].delete(field)
+						@fields[key].delete(field)
 					end
 	            end
-	            new_fields[key] = array_to_uri(new_fields[key])
+	            @fields[key] = array_to_uri(@fields[key])
 			end
 
 			# create entities hash
-			new_entities = {}
-	        entities.each do |entity|
+			@entities = {}
+	        kwargs[:entities].each do |entity|
 				state = ALL_ENTITIES[entity]
 				if state == "false"
-					new_entities[entity] = "true"
+					@entities[entity] = "true"
 				elsif state == "none"
 					if entity == "boardStars"
-						new_entities[entity] = "mine"
+						@entities[entity] = "mine"
 					else
-						new_entities[entity] = "all"
+						@entities[entity] = "all"
 					end
 				end
 			end
+
+			@parameters = @fields.merge(@entities)
 
 			# mutate entities hash according to filters
-			filters.each do |key, val|
-				if new_entities.include?(key)
+			@filters.each do |key, val|
+				if @entities.include?(key)
 					if val != "none"
-						new_entities[key] = array_to_uri(filters[entity])
+						@entities[key] = array_to_uri(@filters[entity])  # BUG: Where is entity defined?
 					end
 				end
 			end
-
-			@_filters    = filters
-			@_fields     = new_fields
-			@_entities   = new_entities
-			@_parameters = new_fields.merge(new_entities)
 		end
+
+		# construct uri
+		def get_uri(board_id, actions_since)
+			params = {
+					actions_format: 'list',
+					actions_since: actions_since,
+					actions_limit: 1000,
+					labels_limit: 1000,
+					key: @key,
+					token: @token
+				}
+			@parameters.each { |key, val| params[key] = val }
+
+			return "/1/boards/#{board_id}?" + URI.encode_www_form(params)
+		end
+
+		def issue_request(uri)
+			request = Net::HTTP.new("api.trello.com", @port)
+			request.use_ssl = true
+			response = request.request_get(uri, {"Connection" => "close"})
+			code = response.code.to_i()
+			if 199 < code and code < 300
+				return JSON.load(response.body)
+			else
+				@logger.warn("HTTP request error", + response)  # BUG: Where is @logger defined?
+				raise RuntimeError, "HTTP request failed with code #{code}: #{response}"
+			end
+		end
+
 		# --------------------------------------------------------------------------
 
-		private
+	private
 		def array_to_uri(item)
 			if item.empty?
 				return ""
@@ -104,20 +121,17 @@ module TRELLO_QUERY
 			end
 		end
 
-		private
+		# get board ids
 		def get_board_ids(board_ids, board_filter)
-			# get board ids
 			if not board_ids.empty?
 				return board_ids
 			else
 				board_ids = Set.new()
-				@_organizations.each do |org|
-					uri =  "/1/organizations/"
-					uri += org
-					uri += "/boards/"
-					uri += board_filter + "?"
-					uri += "&key="       + @_key
-					uri += "&token="     + @_token
+				@organizations.each do |org|
+					uri = "/1/organizations/#{org}/boards/#{board_filter}?" + URI.encode_www_form({
+							key: @key,
+							token: @token
+						})
 					response = issue_request(uri)
 					response.each do |item|
 						board_ids.add(item["shortLink"])
@@ -126,89 +140,8 @@ module TRELLO_QUERY
 				return board_ids.to_a
 			end
 		end
-
-		public
-		def get_uri(board_id, actions_since)
-			# construct uri
-			uri =  "/1/boards/"       + board_id
-			uri += "?actions_format=" + "list"
-			uri += "&actions_since="  + actions_since
-			uri += "&actions_limit="  + "1000"
-			uri += "&labels_limit="   + "1000"
-			uri += "&key="            + @_key
-			uri += "&token="          + @_token
-			temp = ""
-			@_parameters.each { |key, val| temp += "&" + key + "=" + val }
-			uri += temp
-			return uri
-		end
-
-		public
-		def issue_request(uri)
-			response = Net::HTTP.new("api.trello.com", self.port)
-			response.use_ssl = true
-			response = response.request_get(uri, {"Connection" => "close"})
-			code = response.code.to_i()
-			if 199 < code and code < 300
-				return JSON.load(response.body)
-			else
-				@logger.warn("HTTP request error", + response)
-				raise StandardError.new()
-			end
-		end
-		# --------------------------------------------------------------------------
-
-		# accessors
-		public
-		def filters()
-			return @_filters
-		end
-
-		public
-		def fields()
-			return @_fields
-		end
-
-		public
-		def entities()
-			return @_entities
-		end
-
-		public
-		def parameters()
-			return @_parameters
-		end
-
-		public
-		def host()
-			return @_host
-		end
-
-		public
-		def port()
-			return @_port
-		end
-
-		public
-		def organizations()
-			return @_organizations
-		end
-
-		public
-		def key()
-			return @_key
-		end
-
-		public
-		def token()
-			return @_token
-		end
-
-		public
-		def board_ids()
-			return @_board_ids
-		end
 	end
+
 	# ------------------------------------------------------------------------------
 
 
@@ -817,4 +750,5 @@ module TRELLO_QUERY
 		"visible",
 		"website"
 	]
+
 end
