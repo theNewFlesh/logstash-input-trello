@@ -16,7 +16,7 @@ require "set"
 class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	config_name "trello"
 	milestone 1
-	include trello_query
+	include TRELLO_QUERY
 
 	@@plural_entities = [
 		"actions",
@@ -93,30 +93,42 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	config(:organizations, :validate => :array, :required => true)
 		# an array of organizations from which to derive board ids
+
+	config(:board_ids, :validate => :array, :default => [])
+		# ids of boards to be parsed
 	# --------------------------------------------------------------------------
 
 	public
 	def register()
 		if @fields == ["all"]
-			@fields == trello_query::PARAM_ALL_FIELDS
+			@fields == TRELLO_QUERY::PARAM_ALL_FIELDS
 		elsif @fields == ["default"]
-			@fields == trello_query::PARAM_DEFAULT_FIELDS
+			@fields == TRELLO_QUERY::PARAM_DEFAULT_FIELDS
 		end
 
 		if @filters == ["all"]
-			@filters == trello_query::PARAM_ALL_FILTERS
+			@filters == TRELLO_QUERY::PARAM_ALL_FILTERS
 		elsif @filters == ["default"]
-			@filters == trello_query::PARAM_DEFAULT_FILTERS
+			@filters == TRELLO_QUERY::PARAM_DEFAULT_FILTERS
 		end
 		
 		if @entities == ["all"]
-			@entities == trello_query::PARAM_ALL_ENTITIES
+			@entities == TRELLO_QUERY::PARAM_ALL_ENTITIES
 		elsif @entities == ["default"]
-			@entities == trello_query::PARAM_DEFAULT_ENTITIES
+			@entities == TRELLO_QUERY::PARAM_DEFAULT_ENTITIES
 		end
 
-		@trello_query = trello_query::TrelloQuery.new(
-			@organizations, @key, @token, @fields, @entities, @filters, @port)
+		@trello_query = TRELLO_QUERY::TrelloQuery.new(
+			{
+				"organizations" => @organizations,
+				"key"           => @key,
+				"token"         => @token,
+				"board_ids"     => @board_ids,
+				"fields"        => @fields,
+				"entities"      => @entities,
+				"filters"       => @filters,
+				"port"          => @port
+			})
 	end
 	# --------------------------------------------------------------------------
 	

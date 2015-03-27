@@ -6,15 +6,27 @@ require 'net/http'
 require 'json'
 require 'set'
 
-module trello_query
+module TRELLO_QUERY
 	class TrelloQuery
-		def initialize( organizations,
-						key,
-						token,
-						fields=PARAM_DEFAULT_FIELDS,
-						entities=PARAM_DEFAULT_ENTITIES,
-						filters={},
-						port=443)
+		def initialize( kwargs={
+							"organizations" => [],
+							"key"           => nil,
+							"token"         => nil,
+							"board_ids"     => [],
+							"fields"        => PARAM_DEFAULT_FIELDS,
+							"entities"      => PARAM_DEFAULT_ENTITIES,
+							"filters"       => {},
+							"port"          => 443
+						})
+
+			organizations = kwargs["organizations"]
+			key           = kwargs["key"]
+			token         = kwargs["token"]
+			board_ids     = kwargs["board_ids"]
+			fields        = kwargs["fields"]
+			entities      = kwargs["entities"]
+			filters       = kwargs["filters"]
+			port          = kwargs["port"]
 
 			@_host = Socket.gethostname
 			@_port = port
@@ -34,8 +46,12 @@ module trello_query
 					end
 				end
 			end
-
-			@_board_ids = get_board_ids(board_ids, board_filter)
+			
+			if not board_ids.empty?
+				@_board_ids = get_board_ids(board_ids, board_filter)
+			else
+				@board_ids = board_ids
+			end
 
 			# create fields hash
 			new_fields = ALL_FIELDS.clone
