@@ -392,11 +392,9 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 					all_ent = @@all_entities
 					all_ent.delete("entities")
 					data = collapse(data, singular, all_ent)
-					
+
 					# shuffle board info into data
-					if ["members"].include?(out_type)
-						data["board"] = response["board"]
-					end
+					data["board"] = response["board"]
 					
 					data = nested_hash_to_matrix(data)
 					data = coerce_nulls(data)
