@@ -31,7 +31,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		"organizations",
 		"powerups",
 		"checkItemStates",
-		"entities"
+		"entities",
+		"check_items"
 	]
 		
 	@@singular_entities = [
@@ -165,7 +166,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	null
 		# 	lastView
 
-	config(:actions_limit, :validate => :number, :default => 50)
+	config(:actions_limit, :validate => :number, :default => 1000)
 		# valid values:
 		# 	an integer from 0 to 1000
 
@@ -183,11 +184,11 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	false
 
 	config(:action_member_fields, :validate => :array, 
-		   :default => 
-				["avatarHash",
-				 "fullName",
-				 "initials",
-				 "username"])
+		   :default => ["all"]) 
+				# ["avatarHash",
+				#  "fullName",
+				#  "initials",
+				#  "username"])
 		# valid values:
 		# 	all
 		# 	avatarHash
@@ -209,11 +210,11 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	false
 
 	config(:action_member_creator_fields, :validate => :array, 
-		   :default =>
-				["avatarHash",
-				 "fullName",
-				 "initials",
-				 "username"])
+		   :default => ["all"])
+				# ["avatarHash",
+				#  "fullName",
+				#  "initials",
+				#  "username"])
 		# valid values:
 		# 	all
 		# 	avatarHash
@@ -248,17 +249,33 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	# board fields
 	config(:board_fields, :validate => :array,
-		   :default => 
-				["name",
-				"desc",
-				"descData",
-				"closed",
-				"idOrganization",
-				"pinned",
-				"url",
-				"shortUrl",
-				"prefs",
-				"labelNames"])
+		   :default => [
+		   	"closed",
+			"dateLastActivity",
+			"dateLastView",
+			"desc",
+			"descData",
+			"invitations",
+			"invited",
+			"labelNames",
+			"name",
+			"pinned",
+			"prefs",
+			"shortLink",
+			"shortUrl",
+			"starred",
+			"subscribed",
+			"url"])
+			# ["name",
+			# "desc",
+			# "descData",
+			# "closed",
+			# "idOrganization",
+			# "pinned",
+			# "url",
+			# "shortUrl",
+			# "prefs",
+			# "labelNames"])
 		# valid values:
 		# 	all
 		# 	closed
@@ -281,7 +298,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	subscribed
 		# 	url
 
-	config(:board_stars, :validate => :string, :default => "none")
+	config(:board_stars, :validate => :string, :default => "mine")
 		# valid values:
 		# 	mine
 		# 	none
@@ -324,7 +341,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	subscribed
 		# 	url
 
-	config(:card_attachments, :validate => :boolean, :default => false)
+	config(:card_attachments, :validate => :boolean, :default => true)
 		# valid values:
 		# 	A boolean value or &quot;cover&quot; for only card cover attachments
 
@@ -342,12 +359,12 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	previews
 		# 	url
 
-	config(:card_checklists, :validate => :string, :default => "none")
+	config(:card_checklists, :validate => :string, :default => "all")
 		# valid values:
 		# 	all
 		# 	none
 
-	config(:card_stickers, :validate => :boolean, :default => false)
+	config(:card_stickers, :validate => :boolean, :default => true)
 		# valid values:
 		# 	true
 		# 	false
@@ -367,7 +384,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	name
 		# 	uses
 
-	config(:labels_limit, :validate => :number, :default => 50)
+	config(:labels_limit, :validate => :number, :default => 1000)
 		# valid values:
 		# 	a number from 0 to 1000
 	# --------------------------------------------------------------------------
@@ -406,7 +423,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	false
 
 	config(:memberships_member_fields, :validate => :array,
-		   :default => ["fullName", "username"])
+			:default => ["all"])
+		   # :default => ["fullName", "username"])
 		# valid values:
 		# 	all
 		# 	avatarHash
@@ -432,12 +450,22 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	owners
 
 	config(:member_fields, :validate => :array,
-		   :default => 
-				["avatarHash",
-				 "initials",
-				 "fullName",
-				 "username",
-				 "confirmed"])
+		   :default => [
+				"avatarHash",
+				"bio",
+				"confirmed",
+				"fullName",
+				"initials",
+				"memberType",
+				"status",
+				"url",
+				"username"
+			])
+				# ["avatarHash",
+				#  "initials",
+				#  "fullName",
+				#  "username",
+				#  "confirmed"])
 		# valid values:
 		# 	all
 		# 	avatarHash
@@ -454,7 +482,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	username
 
 	# CONFIG WITH ENTITIES
-	config(:members_invited, :validate => :string, :default => "none")
+	config(:members_invited, :validate => :string, :default => "all")
 		# valid values:
 		# 	admins
 		# 	all
@@ -463,11 +491,11 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		# 	owners
 
 	config(:members_invited_fields, :validate => :array,
-		   :default => 
-				["avatarHash",
-				 "initials",
-				 "fullName",
-				 "username"])
+		   :default => ["all"])
+				# ["avatarHash",
+				#  "initials",
+				#  "fullName",
+				#  "username"])
 		# valid values:
 		# 	all
 		# 	avatarHash
@@ -500,13 +528,28 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	# --------------------------------------------------------------------------
 
 	# CONFIG WITH ENTITIES
-	config(:organization, :validate => :boolean, :default => false)
+	config(:organization, :validate => :boolean, :default => true)
 		# valid values:
 		# 	true
 		# 	false
 
-	config(:organization_fields, :validate => :array, 
-		   :default => ["name", "displayName"])
+	config(:organization_fields, :validate => :array,
+		   :default => [
+				"billableMemberCount",
+				"desc",
+				"descData",
+				"displayName",
+				"invitations",
+				"invited",
+				"logoHash",
+				"name",
+				"prefs",
+				"premiumFeatures",
+				"products",
+				"url",
+				"website"
+			])
+		   # :default => ["name", "displayName"])
 		# valid values:
 		# 	all
 		# 	billableMemberCount
@@ -538,7 +581,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	# --------------------------------------------------------------------------
 
 	# CONFIG WITH ENTITIES
-	config(:my_prefs, :validate => :boolean, :default => false)
+	config(:my_prefs, :validate => :boolean, :default => true)
 		# valid values:
 		# 	true
 		# 	false
@@ -559,14 +602,17 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 				"actions",
 				"boards",
 				"cards",
-				# "checklists",
-				# "invitations",
+				"checklists",
+
+				"invitations",
+				
 				"labels",
 				"lists",
-				"members"
-				# "memberships",
-				# "organizations",
-				# "powerups"
+				"members",
+				
+				"memberships",
+				"organizations",
+				"powerups"
 			]
 		end
 
@@ -937,12 +983,21 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 			if response.has_key?(ent_type)
 				response[ent_type].each do |source|
 					singular = ent_type[0..-2]
+					# puts JSON.dump(source), "\n"
 					data = clean_data(source, lut)
+					# puts JSON.dump(data), "\n"
 					data = expand_entities(data, lut)
+					# puts JSON.dump(data), "\n"
 					all_ent = @@all_entities
 					all_ent.delete("entities")
 					data = collapse(data, singular, all_ent)
-					data["board"] = response["board"]
+					# puts JSON.dump(data), "\n"
+					
+					# shuffle board info into data
+					if ["members"].include?(ent_type)
+						data["board"] = response["board"]
+					end
+					
 					data = nested_hash_to_matrix(data)
 					data = coerce_nulls(data)
 					if @snake_case
