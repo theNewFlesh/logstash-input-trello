@@ -1,10 +1,9 @@
 # encoding: utf-8
 
-require "trello_query"
+require "trello_utils"
 require "logstash/inputs/base"
 require "logstash/namespace"
 require "stud/interval"
-require "net/http"
 require "json"
 require "time"
 require "set"
@@ -16,7 +15,6 @@ require "set"
 class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	config_name "trello"
 	milestone 1
-	include TRELLO_QUERY
 
 	@@plural_entities = [
 		"actions",
@@ -103,21 +101,21 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	public
 	def register()
 		if @fields == ["all"]
-			@fields = TRELLO_QUERY::PARAM_ALL_FIELDS
+			@fields = TrelloUtils::PARAM_ALL_FIELDS
 		elsif @fields == ["default"]
-			@fields = TRELLO_QUERY::PARAM_DEFAULT_FIELDS
+			@fields = TrelloUtils::PARAM_DEFAULT_FIELDS
 		end
 
 		if @filters == ["all"]
-			@filters = TRELLO_QUERY::PARAM_ALL_FILTERS
+			@filters = TrelloUtils::PARAM_ALL_FILTERS
 		elsif @filters == ["default"]
-			@filters = TRELLO_QUERY::PARAM_DEFAULT_FILTERS
+			@filters = TrelloUtils::PARAM_DEFAULT_FILTERS
 		end
 		
 		if @entities == ["all"]
-			@entities = TRELLO_QUERY::PARAM_ALL_ENTITIES
+			@entities = TrelloUtils::PARAM_ALL_ENTITIES
 		elsif @entities == ["default"]
-			@entities = TRELLO_QUERY::PARAM_DEFAULT_ENTITIES
+			@entities = TrelloUtils::PARAM_DEFAULT_ENTITIES
 		end
 
 		if @output_type == ["all"]
@@ -133,17 +131,16 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 			]
 		end
 
-		@trello_query = TRELLO_QUERY::TrelloQuery.new(
-			{
-				"organizations" => @organizations,
-				"key"           => @key,
-				"token"         => @token,
-				"board_ids"     => @board_ids,
-				"fields"        => @fields,
-				"entities"      => @entities,
-				"filters"       => @filters,
-				"port"          => @port
-			})
+		@client = TrelloUtils::TrelloClient.new({
+				organizations: @organizations,
+				key:           @key,
+				token:         @token,
+				board_ids:     @board_ids,
+				fields:        @fields,
+				entities:      @entities,
+				filters:       @filters,
+				port:          @port
+		})
 	end
 	# --------------------------------------------------------------------------
 	
@@ -429,11 +426,11 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		query_time = Time.now - @interval
 		query_time = query_time.strftime('%Y-%m-%dT%H:%M:%S%z')
 		Stud.interval(@interval) do
-			@trello_query.board_ids.each do |board_id|
-				uri = @trello_query.get_uri(board_id, query_time)
+			@client.board_ids.each do |board_id|
+				uri = @client.get_uri(board_id, query_time)
 				response = nil
 				begin
-					response = @trello_query.issue_request(uri)
+					response = @client.issue_request(uri)
 				rescue StandardError
 					next
 				end

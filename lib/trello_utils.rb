@@ -1,72 +1,61 @@
 # encoding: utf-8
 
 require "socket"
-require 'addressable/uri'
+require 'uri'
 require 'net/http'
 require 'json'
 require 'set'
 
-module TRELLO_QUERY
-	class TrelloQuery
-		def initialize( kwargs={
-							"organizations" => [],
-							"key"           => nil,
-							"token"         => nil,
-							"board_ids"     => [],
-							"fields"        => PARAM_DEFAULT_FIELDS,
-							"entities"      => PARAM_DEFAULT_ENTITIES,
-							"filters"       => {},
-							"port"          => 443
-						})
+module TrelloUtils
+	class TrelloClient
+		attr_reader(:host, :port, :organizations, :key, :token, :board_ids,
+			:parameters, :filters, :fields, :entities)
 
-			organizations = kwargs["organizations"]
-			key           = kwargs["key"]
-			token         = kwargs["token"]
-			board_ids     = kwargs["board_ids"]
-			fields        = kwargs["fields"]
-			entities      = kwargs["entities"]
-			filters       = kwargs["filters"]
-			port          = kwargs["port"]
+		def initialize(kwargs={
+							organizations:  [], # an array of organizations from which to derive board ids
+							key:            nil, # oauth key
+							token:          nil, # oauth secret
+							board_ids:      [],
+							fields:         PARAM_DEFAULT_FIELDS,
+							entities:       PARAM_DEFAULT_ENTITIES,
+							filters:        {},
+							port:           443 # trello REST port
+			})
 
-			@_host = Socket.gethostname
-			@_port = port
-				# The port trello listens on for REST requests
-			@_organizations = organizations
-				# an array of organizations from which to derive board ids
-			@_key = key
-				# oauth key
-			@_token = token
-				# oauth secret
+			@organizations = kwargs[:organizations]
+			@key           = kwargs[:key]
+			@token         = kwargs[:token]
+			@board_ids     = kwargs[:board_ids]
+			@fields        = kwargs[:fields]
+			@entities      = kwargs[:entities]
+			@filters       = kwargs[:filters]
+			@port          = kwargs[:port]
 
-			board_filter = "all"
-			if not filters.empty?
-				if filters.has_key?("boards")
-					if not filters["boards"].empty?
-						board_filter = array_to_uri( filters["boards"] )
+			@host = Socket.gethostname	
+
+			# get board ids if none are provided
+			if @board_ids.empty?
+				board_filter = "all"
+				if @filters.has_key?("boards")
+					if not @filters["boards"].empty?
+						board_filter = array_to_uri( @filters["boards"] )
 					end
 				end
-			end
-			
-			if not board_ids.empty?
-				@_board_ids = get_board_ids(board_ids, board_filter)
-			else
-				@board_ids = board_ids
+				@board_ids = get_board_ids(@board_ids, board_filter)
 			end
 
 			# create fields hash
+			@fields = Set.new(@fields)
 			new_fields = ALL_FIELDS.clone
 			new_fields.to_a.each do |key, val|
-				fields.each do |field|
-					if not val.include?(field)
-						new_fields[key].delete(field)
-					end
-	            end
-	            new_fields[key] = array_to_uri(new_fields[key])
+				temp = @fields.intersection(val).to_a
+	            new_fields[key] = array_to_uri(temp)
 			end
+			@fields = new_fields
 
 			# create entities hash
 			new_entities = {}
-	        entities.each do |entity|
+	        @entities.each do |entity|
 				state = ALL_ENTITIES[entity]
 				if state == "false"
 					new_entities[entity] = "true"
@@ -78,20 +67,25 @@ module TRELLO_QUERY
 					end
 				end
 			end
-
+			
 			# mutate entities hash according to filters
-			filters.each do |key, val|
+			@filters.each do |key, val|
 				if new_entities.include?(key)
 					if val != "none"
 						new_entities[key] = array_to_uri(filters[entity])
 					end
 				end
 			end
+			@entities = new_entities
 
-			@_filters    = filters
-			@_fields     = new_fields
-			@_entities   = new_entities
-			@_parameters = new_fields.merge(new_entities)
+			# merge fields and entities into params
+			params = new_fields.merge(new_entities)
+			
+			# switch out board_fields with fields
+			params["fields"] = params["board_fields"]
+			params.delete("board_fields")
+
+			@parameters = params
 		end
 		# --------------------------------------------------------------------------
 
@@ -111,13 +105,13 @@ module TRELLO_QUERY
 				return board_ids
 			else
 				board_ids = Set.new()
-				@_organizations.each do |org|
+				@organizations.each do |org|
 					uri =  "/1/organizations/"
 					uri += org
 					uri += "/boards/"
 					uri += board_filter + "?"
-					uri += "&key="       + @_key
-					uri += "&token="     + @_token
+					uri += "&key=" + @key
+					uri += "&token=" + @token
 					response = issue_request(uri)
 					response.each do |item|
 						board_ids.add(item["shortLink"])
@@ -127,25 +121,25 @@ module TRELLO_QUERY
 			end
 		end
 
+		# construct uri
 		public
 		def get_uri(board_id, actions_since)
-			# construct uri
-			uri =  "/1/boards/"       + board_id
-			uri += "?actions_format=" + "list"
-			uri += "&actions_since="  + actions_since
-			uri += "&actions_limit="  + "1000"
-			uri += "&labels_limit="   + "1000"
-			uri += "&key="            + @_key
-			uri += "&token="          + @_token
-			temp = ""
-			@_parameters.each { |key, val| temp += "&" + key + "=" + val }
-			uri += temp
+			uri = "/1/boards/" + board_id
+			uri += URI.encode_www_form(
+				"actions_format" => "list",
+				"actions_since"  => actions_since,
+				"actions_limit"  => "1000",
+				"labels_limit"   => "1000",
+				"key"            => @key,
+				"token"          => @token
+			)
+			uri += URI.encode_www_form(**@parameters)		
 			return uri
 		end
 
 		public
 		def issue_request(uri)
-			response = Net::HTTP.new("api.trello.com", self.port)
+			response = Net::HTTP.new("api.trello.com", @port)
 			response.use_ssl = true
 			response = response.request_get(uri, {"Connection" => "close"})
 			code = response.code.to_i()
@@ -155,58 +149,6 @@ module TRELLO_QUERY
 				@logger.warn("HTTP request error", + response)
 				raise StandardError.new()
 			end
-		end
-		# --------------------------------------------------------------------------
-
-		# accessors
-		public
-		def filters()
-			return @_filters
-		end
-
-		public
-		def fields()
-			return @_fields
-		end
-
-		public
-		def entities()
-			return @_entities
-		end
-
-		public
-		def parameters()
-			return @_parameters
-		end
-
-		public
-		def host()
-			return @_host
-		end
-
-		public
-		def port()
-			return @_port
-		end
-
-		public
-		def organizations()
-			return @_organizations
-		end
-
-		public
-		def key()
-			return @_key
-		end
-
-		public
-		def token()
-			return @_token
-		end
-
-		public
-		def board_ids()
-			return @_board_ids
 		end
 	end
 	# ------------------------------------------------------------------------------
@@ -541,25 +483,6 @@ module TRELLO_QUERY
 		"checklists"
 	]
 
-	PARAM_DEFAULT_ENTITIES = [
-		"actions_entities",
-		"action_member",
-		"action_memberCreator",
-		"card_stickers",
-		"memberships_member",
-		"organization",
-		"myPrefs",
-		"card_attachments",
-		"cards",
-		"card_checklists",
-		"boardStars",
-		"labels",
-		"lists",
-		"members",
-		"membersInvited",
-		"checklists"
-	]
-
 	PARAM_ALL_FIELDS = [
 		"active",
 		"addAttachmentToCard",
@@ -689,6 +612,25 @@ module TRELLO_QUERY
 		"website"
 	]
 
+	PARAM_DEFAULT_ENTITIES = [
+		# "actions_entities",
+		"action_member",
+		"action_memberCreator",
+		# "card_stickers",
+		# "memberships_member",
+		# "organization",
+		# "myPrefs",
+		# "card_attachments",
+		"cards",
+		"card_checklists",
+		# "boardStars",
+		"labels",
+		"lists",
+		"members",
+		# "membersInvited",
+		"checklists"
+	]
+
 	PARAM_DEFAULT_FIELDS = [
 		"active",
 		"addAttachmentToCard",
@@ -699,17 +641,17 @@ module TRELLO_QUERY
 		"addToOrganizationBoard",
 		"admin",
 		"admins",
-		"avatarHash",
-		"badges",
+		# "avatarHash",
+		# "badges",
 		"billableMemberCount",
 		"bio",
-		"bioData",
+		# "bioData",
 		"bytes",
 		"checkItemStates",
 		"closed",
 		"color",
 		"commentCard",
-		"confirmed",
+		# "confirmed",
 		"convertToCardFromCheckItem",
 		"copyBoard",
 		"copyCard",
@@ -721,24 +663,24 @@ module TRELLO_QUERY
 		"createOrganization",
 		"data",
 		"date",
-		"dateLastActivity",
-		"dateLastView",
+		# "dateLastActivity",
+		# "dateLastView",
 		"deactivated",
 		"deleteAttachmentFromCard",
 		"deleteBoardInvitation",
 		"deleteCard",
 		"deleteOrganizationInvitation",
 		"desc",
-		"descData",
+		# "descData",
 		"disablePowerUp",
 		"displayName",
 		"due",
-		"edgeColor",
-		"email",
-		"emailCard",
-		"enablePowerUp",
+		# "edgeColor",
+		# "email",
+		# "emailCard",
+		# "enablePowerUp",
 		"fullName",
-		"idAttachmentCover",
+		# "idAttachmentCover",
 		"idBoard",
 		"idBoards",
 		"idCard",
@@ -750,16 +692,16 @@ module TRELLO_QUERY
 		"idMembers",
 		"idMembersVoted",
 		"idOrganization",
-		"idPremOrgsAdmin",
-		"idShort",
-		"initials",
-		"invitations",
-		"invited",
+		# "idPremOrgsAdmin",
+		# "idShort",
+		# "initials",
+		# "invitations",
+		# "invited",
 		"isUpload",
 		"labelNames",
 		"labels",
 		"list",
-		"logoHash",
+		# "logoHash",
 		"makeAdminOfBoard",
 		"makeNormalMemberOfBoard",
 		"makeNormalMemberOfOrganization",
@@ -767,9 +709,9 @@ module TRELLO_QUERY
 		"manualCoverAttachment",
 		"me",
 		"memberJoinedTrello",
-		"memberType",
-		"memberships",
-		"mimeType",
+		# "memberType",
+		# "memberships",
+		# "mimeType",
 		"mine",
 		"minimal",
 		"moveCardFromBoard",
@@ -780,21 +722,21 @@ module TRELLO_QUERY
 		"normal",
 		"open",
 		"owners",
-		"pinned",
+		# "pinned",
 		"pos",
-		"powerUps",
-		"prefs",
+		# "powerUps",
+		# "prefs",
 		"premiumFeatures",
 		"previews",
-		"products",
+		# "products",
 		"removeChecklistFromCard",
 		"removeFromOrganizationBoard",
 		"removeMemberFromCard",
 		"shortLink",
-		"shortUrl",
-		"starred",
+		# "shortUrl",
+		# "starred",
 		"status",
-		"subscribed",
+		# "subscribed",
 		"type",
 		"unconfirmedBoardInvitation",
 		"unconfirmedOrganizationInvitation",
@@ -811,7 +753,7 @@ module TRELLO_QUERY
 		"updateList:name",
 		"updateMember",
 		"updateOrganization",
-		"url",
+		# "url",
 		"username",
 		"uses",
 		"visible",
