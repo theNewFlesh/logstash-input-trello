@@ -30,7 +30,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		"powerups",
 		"checkItemStates",
 		"entities",
-		"check_items"
+		"checkItems"
 	]
 		
 	@@singular_entities = [
@@ -44,7 +44,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		"member",
 		"membership",
 		"organization",
-		"powerup"
+		"powerup",
+		"checkItem"
 	]
 
 	@@all_entities = @@singular_entities + @@plural_entities
@@ -52,12 +53,19 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	@@plural_ids = [
 		"idChecklists",
 		"idLabels",
-		"idMembers"
+		"idMembers",
+		"idMembersVoted"
 	]
 
 	@@singular_ids = [
 		"idBoard",
-		"idList"
+		"idList",
+		"idCard",
+		"idMemberCreator",
+		"idMember",
+		"idOrganization",
+		"idCheckItem",
+		"idShort"
 	]
 
 	@@all_ids = @@singular_ids + @@plural_ids
@@ -190,63 +198,142 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	end
 
 	private
-	def clean_data(data, lut)
+	def conform_field_names(data, plural=false)
+		if not data.is_a?(Hash)
+			return data
+		end
+		data = data.clone
+		data.to_a.each do |key, val|
+			if @@all_ids.include?(key)
+				# clobber non-id fields with id fields
+				new_key = key.gsub(/^id/, '')
+				new_key = new_key[0].downcase + new_key[1..-1]
+				if plural
+					new_key = pluralize(new_key)
+				end
+				data[new_key] = val
+				data.delete(key)
+			end
+		end
+		data = conform_subfield_names(data)
+		return data
+	end
+
+	private
+	def conform_subfield_names(data, plural=false)
+		func = lambda do |store, key, val|
+			if val.is_a?(Hash)
+				output = val
+				val.to_a.each do |k, v|
+					if @@all_ids.include?(k)
+						# clobber non-id fields with id fields
+						new_key = k.gsub(/^id/, '')
+						new_key = new_key[0].downcase + new_key[1..-1]
+						if plural
+							new_key = pluralize(new_key)
+						end
+						output[new_key] = v
+						output.delete(k)
+					end
+				end
+				return output
+			else
+				return val
+			end
+		end
+		return recurse(data, func, func)
+	end
+
+	private
+	def clean_data(data)
 		data = data.clone
 		# remove actions data field
 		if data.has_key?("data")
 			data["data"].each do |key, val|
-				data[key] = val
+				if not key == "old"
+					data[key] = val
+				end
 			end
 			data.delete("data")
 		end
 		if data.has_key?("board")
 			data.delete("board")
 		end
-
-		data.to_a.each do |key, val|
-			if @@all_ids.include?(key)
-				# clobber non-id fields with id fields
-				new_key = key.gsub(/^id/, '')
-				new_key = new_key[0].downcase + new_key[1..-1]
-				new_key = pluralize(new_key)
-				data[new_key] = val
-				data.delete(key)
-			end
-		end
 		return data
 	end
 	
-	public
+	private
+	def get_data_structure_type(val)
+		if val.is_a?(Array)
+			if not val.empty?
+				if val[0].is_a?(Hash)
+					return "array_of_hashes"
+				elsif val[0].is_a?(String)
+					return "array_of_strings"
+				end
+			else
+				return "empty_array"
+			end
+		elsif val.is_a?(Hash)
+			if val.has_key?("id")
+				return "hash_with_id"
+			else
+				return "hash_without_id"
+			end
+		else
+			return val.class.to_s
+		end
+	end
+
+	private
 	def expand_entities(data, lut)
 		func = lambda do |store, key, val|
-			if @@plural_entities.include?(key)
-				if val.is_a?(Array)
-					if not val.empty?
-						if val[0].is_a?(String)
-							output = []
-							val.each do |id|
-								if lut[key].has_key?(id)
-									output.push(lut[key][id])
-								end
+			pkey = pluralize(key)
+			l = lut[pkey]
+			if l.nil?
+				l = {}
+			end
+
+			output = val
+			ds_type = get_data_structure_type(val)
+			if /^array_of/.match(ds_type)
+				output = []
+				if ds_type == "array_of_hashes"
+					val.each do |item|
+						item_type = get_data_structure_type(item)
+						new_item = item
+						if item_type == "hash_with_id"
+							if l.has_key?(item["id"])
+								new_item = l[item["id"]]
 							end
-							if not output.empty?
-								return reduce(output)
-							end
-						elsif val[0].is_a?(Hash)
-							return reduce(val)
+						end
+						output.push(new_item)
+					end
+
+				elsif ds_type == "array_of_strings"
+					val.each do |id|
+						if l.has_key?(id)
+							output.push(l[id])
 						end
 					end
-				else
-					return val
 				end
-			elsif @@singular_entities.include?(key) and val.has_key?("id")
-				l = lut[pluralize(key)]
+				output = reduce(output)
+
+			elsif ds_type == "empty_array"
+				output = nil
+
+			elsif ds_type == "hash_with_id"
 				if l.has_key?(val["id"])
-					return l[ val["id"] ]
-				end			
-			else
-				return val
+					output = l[val["id"]]
+				end
+
+			elsif ds_type == "String"
+				if l.has_key?(val)
+					output = l[val]
+				end
 			end
+
+			return conform_field_names(output)
 		end
 		return recurse(data, func, func)
 	end
@@ -384,15 +471,18 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 			if response.has_key?(out_type)
 				response[out_type].each do |source|
 					singular = out_type[0..-2]
-					data = clean_data(source, lut)
+					data = clean_data(source)
+					data = conform_field_names(data, true)
 					data = expand_entities(data, lut)
 					all_ent = @@all_entities
 					all_ent.delete("entities")
 					data = collapse(data, singular, all_ent)
 
 					# shuffle board info into data
-					data["board"] = response["board"]
-					
+					board = response["board"]
+					board = conform_field_names(board)
+					data["board"] = board
+
 					data = nested_hash_to_matrix(data)
 					data = coerce_nulls(data)
 					if @snake_case
@@ -431,7 +521,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 				response = nil
 				begin
 					response = @client.issue_request(uri)
-				rescue StandardError
+				rescue RuntimeError
 					next
 				end
 				process_response(response, queue)

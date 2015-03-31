@@ -98,20 +98,16 @@ module TrelloUtils
 			end
 		end
 
+		# get board ids
 		private
 		def get_board_ids(board_ids, board_filter)
-			# get board ids
 			if not board_ids.empty?
 				return board_ids
 			else
 				board_ids = Set.new()
 				@organizations.each do |org|
-					uri =  "/1/organizations/"
-					uri += org
-					uri += "/boards/"
-					uri += board_filter + "?"
-					uri += "&key=" + @key
-					uri += "&token=" + @token
+					uri =  "/1/organizations/#{org}/boards/#{board_filter}?"
+					uri += URI.encode_www_form({key: @key, token: @token})
 					response = issue_request(uri)
 					response.each do |item|
 						board_ids.add(item["shortLink"])
@@ -124,16 +120,16 @@ module TrelloUtils
 		# construct uri
 		public
 		def get_uri(board_id, actions_since)
-			uri = "/1/boards/" + board_id
-			uri += URI.encode_www_form(
+			uri = "/1/boards/#{board_id}?"
+			args = {
 				"actions_format" => "list",
 				"actions_since"  => actions_since,
 				"actions_limit"  => "1000",
 				"labels_limit"   => "1000",
 				"key"            => @key,
 				"token"          => @token
-			)
-			uri += URI.encode_www_form(**@parameters)		
+			}
+			uri += URI.encode_www_form(@parameters.merge(args))
 			return uri
 		end
 
@@ -146,8 +142,8 @@ module TrelloUtils
 			if 199 < code and code < 300
 				return JSON.load(response.body)
 			else
-				@logger.warn("HTTP request error", + response)
-				raise StandardError.new()
+				@logger.warn("HTTP request error: ", + response)
+				raise RuntimeError, "HTTP request failed with code #{code}: #{response}"
 			end
 		end
 	end
