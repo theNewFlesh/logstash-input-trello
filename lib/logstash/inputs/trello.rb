@@ -170,8 +170,6 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		return lut
 	end
 
-	null_func = lambda { |store, key, val| return val }
-
 	private
 	def recurse(data, hash_func, func=nil)
 		if func.nil?
@@ -244,7 +242,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		end
 		return recurse(data, func, func)
 	end
-
+	
 	private
 	def clean_data(data)
 		data = data.clone
@@ -495,11 +493,13 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	public
 	def run(queue)
-		query_time = Time.now - @interval
-		query_time = query_time.strftime('%Y-%m-%dT%H:%M:%S%z')
+		init_time = Time.now - @interval
+		init_time = init_time.strftime('%Y-%m-%dT%H:%M:%S%z')
+		query_times = {}
+		board_ids.each { |board_id| query_times[board_id] = init_time}
 		Stud.interval(@interval) do
 			@client.board_ids.each do |board_id|
-				uri = @client.get_uri(board_id, query_time)
+				uri = @client.get_uri(board_id, query_times[board_id])
 				response = nil
 				begin
 					response = @client.issue_request(uri)
@@ -507,8 +507,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 					next
 				end
 				process_response(response, queue)
+				query_times[board_id] = Time.now.strftime('%Y-%m-%dT%H:%M:%S%z')
 			end
-			query_time = Time.now.strftime('%Y-%m-%dT%H:%M:%S%z')
 		end
 	end
 end
