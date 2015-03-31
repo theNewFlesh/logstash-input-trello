@@ -171,7 +171,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	null_func = lambda { |store, key, val| return val }
 
-	public
+	private
 	def recurse(data, hash_func, func=nil)
 		if func.nil?
 			func = lambda { |store, key, val| return val }
@@ -474,7 +474,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 					data = clean_data(source)
 					data = conform_field_names(data, true)
 					data = expand_entities(data, lut)
-					all_ent = @@all_entities
+					all_ent = @@all_entities.clone
 					all_ent.delete("entities")
 					data = collapse(data, singular, all_ent)
 
