@@ -5,6 +5,7 @@ require 'uri'
 require 'net/http'
 require 'json'
 require 'set'
+require 'URI'
 
 module TrelloUtils
 	class TrelloClient
@@ -58,12 +59,12 @@ module TrelloUtils
 	        @entities.each do |entity|
 				state = ALL_ENTITIES[entity]
 				if state == "false"
-					new_entities[entity] = "true"
+					@entities[entity] = "true"
 				elsif state == "none"
 					if entity == "boardStars"
-						new_entities[entity] = "mine"
+						@entities[entity] = "mine"
 					else
-						new_entities[entity] = "all"
+						@entities[entity] = "all"
 					end
 				end
 			end
@@ -72,7 +73,7 @@ module TrelloUtils
 			@filters.each do |key, val|
 				if new_entities.include?(key)
 					if val != "none"
-						new_entities[key] = array_to_uri(filters[entity])
+						@entities[key] = array_to_uri(@filters[entity])  # BUG: Where is entity defined?
 					end
 				end
 			end
@@ -87,9 +88,10 @@ module TrelloUtils
 
 			@parameters = params
 		end
+
 		# --------------------------------------------------------------------------
 
-		private
+	private
 		def array_to_uri(item)
 			if item.empty?
 				return ""
@@ -147,6 +149,7 @@ module TrelloUtils
 			end
 		end
 	end
+
 	# ------------------------------------------------------------------------------
 
 
@@ -755,4 +758,5 @@ module TrelloUtils
 		"visible",
 		"website"
 	]
+
 end
