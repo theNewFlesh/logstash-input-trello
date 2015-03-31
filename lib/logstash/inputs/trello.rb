@@ -7,6 +7,7 @@ require "stud/interval"
 require "json"
 require "time"
 require "set"
+require "active_support/core_ext/string/inflections"
 # ------------------------------------------------------------------------------
 
 # The trello filter is used querying the trello database and returning the resulting
@@ -209,7 +210,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 				new_key = key.gsub(/^id/, '')
 				new_key = new_key[0].downcase + new_key[1..-1]
 				if plural
-					new_key = pluralize(new_key)
+					new_key = new_key.pluralize
 				end
 				data[new_key] = val
 				data.delete(key)
@@ -230,7 +231,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 						new_key = k.gsub(/^id/, '')
 						new_key = new_key[0].downcase + new_key[1..-1]
 						if plural
-							new_key = pluralize(new_key)
+							new_key = new_key.pluralize
 						end
 						output[new_key] = v
 						output.delete(k)
@@ -288,7 +289,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	private
 	def expand_entities(data, lut)
 		func = lambda do |store, key, val|
-			pkey = pluralize(key)
+			pkey = key.pluralize
 			l = lut[pkey]
 			if l.nil?
 				l = {}
@@ -317,7 +318,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 						end
 					end
 				end
-				output = reduce(output)
+				output = group(output)
 
 			elsif ds_type == "empty_array"
 				output = nil
@@ -353,17 +354,6 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	end
 
 	private
-	def depluralize(item)
-		return item.gsub(/s$/, "")
-	end
-
-	private
-	def pluralize(item)
-		output = item.gsub(/s$/, "")
-		return output + "s"
-	end
-
-	private
 	def coerce_nulls(data)
 		data.each do |index, item|
 			if item == ""
@@ -374,8 +364,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	end
 
 	private
-	def reduce(data)
-		def _reduce(data)
+	def group(data)
+		def _group(data)
 			prototype = {}
 			data.each do |entry|
 				entry.each do |key, val|
@@ -396,7 +386,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		if data.is_a?(Array)
 			if not data.empty?
 				if data[0].is_a?(Hash)
-					return _reduce(data)
+					return _group(data)
 				end
 			end
 		else
@@ -407,16 +397,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	private
 	def to_snake_case(data)
-		def _to_snake_case(item)
-			output = item.gsub(/::/, '/')\
-				.gsub(/([A-Z]+)([A-Z][a-z])/,'\1_\2')\
-				.gsub(/([a-z\d])([A-Z])/,'\1_\2')\
-				.tr("-", "_")\
-				.downcase
-			return output
-		end
-
-		data.select { |index, item| index.map! { |item| _to_snake_case(item) } }
+		data = data.clone
+		data.each { |index, item| index.map! { |item| item.underscore } }
 		return data
 	end
 
@@ -470,7 +452,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		@output_types.each do |out_type|
 			if response.has_key?(out_type)
 				response[out_type].each do |source|
-					singular = out_type[0..-2]
+					singular = out_type.singularize
 					data = clean_data(source)
 					data = conform_field_names(data, true)
 					data = expand_entities(data, lut)
