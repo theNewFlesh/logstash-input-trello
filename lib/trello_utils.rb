@@ -1,6 +1,7 @@
 # encoding: utf-8
 
-require 'socket'
+require "socket"
+require 'uri'
 require 'net/http'
 require 'json'
 require 'set'
@@ -14,50 +15,56 @@ module TrelloQuery
 		attr_accessor :filters, :fields, :entities, :parameters, :host, :port, :organizations,
 					  :key, :token, :board_ids, :token, :board_ids
 
-		def initialize( kwargs={
-							:organizations => [],  # an array of organizations from which to derive board ids
-							:key           => nil,  # oauth key
-							:token         => nil,  # oauth secret
-							:board_ids     => [],
-							:fields        => PARAM_DEFAULT_FIELDS,
-							:entities      => PARAM_DEFAULT_ENTITIES,
-							:filters       => {},
-							:port          => 443  # The port trello listens on for REST requests
-						})
+module TrelloUtils
+	class TrelloClient
+		attr_reader(:host, :port, :organizations, :key, :token, :board_ids,
+			:parameters, :filters, :fields, :entities)
+
+		def initialize(kwargs={
+							organizations:  [], # an array of organizations from which to derive board ids
+							key:            nil, # oauth key
+							token:          nil, # oauth secret
+							board_ids:      [],
+							fields:         PARAM_DEFAULT_FIELDS,
+							entities:       PARAM_DEFAULT_ENTITIES,
+							filters:        {},
+							port:           443 # trello REST port
+			})
 
 			@organizations = kwargs[:organizations]
-			@key = kwargs[:key]
-			@token = kwargs[:token]
-			@filters = kwargs[:filters]
-			@port = kwargs[:port]  
-			@host = Socket.gethostname
-				
-			board_filter = "all"
-			if @filters.has_key?("boards")
-				if not @filters["boards"].empty?
-					board_filter = array_to_uri(@filters["boards"])
-				end
-			end
+			@key           = kwargs[:key]
+			@token         = kwargs[:token]
+			@board_ids     = kwargs[:board_ids]
+			@fields        = kwargs[:fields]
+			@entities      = kwargs[:entities]
+			@filters       = kwargs[:filters]
+			@port          = kwargs[:port]
 
-			@board_ids = kwargs[:board_ids]
-			if not @board_ids.empty?
+			@host = Socket.gethostname	
+
+			# get board ids if none are provided
+			if @board_ids.empty?
+				board_filter = "all"
+				if @filters.has_key?("boards")
+					if not @filters["boards"].empty?
+						board_filter = array_to_uri( @filters["boards"] )
+					end
+				end
 				@board_ids = get_board_ids(@board_ids, board_filter)
 			end
 
 			# create fields hash
-			@fields = ALL_FIELDS.clone
-			@fields.to_a.each do |key, val|
-				kwargs[:fields].each do |field|
-					if not val.include?(field)
-						@fields[key].delete(field)
-					end
-	            end
-	            @fields[key] = array_to_uri(@fields[key])
+			@fields = Set.new(@fields)
+			new_fields = ALL_FIELDS.clone
+			new_fields.to_a.each do |key, val|
+				temp = @fields.intersection(val).to_a
+	            new_fields[key] = array_to_uri(temp)
 			end
+			@fields = new_fields
 
 			# create entities hash
-			@entities = {}
-	        kwargs[:entities].each do |entity|
+			new_entities = {}
+	        @entities.each do |entity|
 				state = ALL_ENTITIES[entity]
 				if state == "false"
 					@entities[entity] = "true"
@@ -69,45 +76,25 @@ module TrelloQuery
 					end
 				end
 			end
-
-			@parameters = @fields.merge(@entities)
-
+			
 			# mutate entities hash according to filters
 			@filters.each do |key, val|
-				if @entities.include?(key)
+				if new_entities.include?(key)
 					if val != "none"
 						@entities[key] = array_to_uri(@filters[entity])  # BUG: Where is entity defined?
 					end
 				end
 			end
-		end
+			@entities = new_entities
 
-		# construct uri
-		def get_uri(board_id, actions_since)
-			params = {
-					actions_format: 'list',
-					actions_since: actions_since,
-					actions_limit: 1000,
-					labels_limit: 1000,
-					key: @key,
-					token: @token
-				}
-			@parameters.each { |key, val| params[key] = val }
+			# merge fields and entities into params
+			params = new_fields.merge(new_entities)
+			
+			# switch out board_fields with fields
+			params["fields"] = params["board_fields"]
+			params.delete("board_fields")
 
-			return "/1/boards/#{board_id}?" + URI.encode_www_form(params)
-		end
-
-		def issue_request(uri)
-			request = Net::HTTP.new("api.trello.com", @port)
-			request.use_ssl = true
-			response = request.request_get(uri, {"Connection" => "close"})
-			code = response.code.to_i()
-			if 199 < code and code < 300
-				return JSON.load(response.body)
-			else
-				@logger.warn("HTTP request error", + response)  # BUG: Where is @logger defined?
-				raise RuntimeError, "HTTP request failed with code #{code}: #{response}"
-			end
+			@parameters = params
 		end
 
 		# --------------------------------------------------------------------------
@@ -122,22 +109,51 @@ module TrelloQuery
 		end
 
 		# get board ids
+		private
 		def get_board_ids(board_ids, board_filter)
 			if not board_ids.empty?
 				return board_ids
 			else
 				board_ids = Set.new()
 				@organizations.each do |org|
-					uri = "/1/organizations/#{org}/boards/#{board_filter}?" + URI.encode_www_form({
-							key: @key,
-							token: @token
-						})
+					uri =  "/1/organizations/#{org}/boards/#{board_filter}?"
+					uri += URI.encode_www_form({key: @key, token: @token})
 					response = issue_request(uri)
 					response.each do |item|
 						board_ids.add(item["shortLink"])
 					end
 				end
 				return board_ids.to_a
+			end
+		end
+
+		# construct uri
+		public
+		def get_uri(board_id, actions_since)
+			uri = "/1/boards/#{board_id}?"
+			args = {
+				"actions_format" => "list",
+				"actions_since"  => actions_since,
+				"actions_limit"  => "1000",
+				"labels_limit"   => "1000",
+				"key"            => @key,
+				"token"          => @token
+			}
+			uri += URI.encode_www_form(@parameters.merge(args))
+			return uri
+		end
+
+		public
+		def issue_request(uri)
+			response = Net::HTTP.new("api.trello.com", @port)
+			response.use_ssl = true
+			response = response.request_get(uri, {"Connection" => "close"})
+			code = response.code.to_i()
+			if 199 < code and code < 300
+				return JSON.load(response.body)
+			else
+				@logger.warn("HTTP request error: ", + response)
+				raise RuntimeError, "HTTP request failed with code #{code}: #{response}"
 			end
 		end
 	end
@@ -474,25 +490,6 @@ module TrelloQuery
 		"checklists"
 	]
 
-	PARAM_DEFAULT_ENTITIES = [
-		"actions_entities",
-		"action_member",
-		"action_memberCreator",
-		"card_stickers",
-		"memberships_member",
-		"organization",
-		"myPrefs",
-		"card_attachments",
-		"cards",
-		"card_checklists",
-		"boardStars",
-		"labels",
-		"lists",
-		"members",
-		"membersInvited",
-		"checklists"
-	]
-
 	PARAM_ALL_FIELDS = [
 		"active",
 		"addAttachmentToCard",
@@ -622,6 +619,25 @@ module TrelloQuery
 		"website"
 	]
 
+	PARAM_DEFAULT_ENTITIES = [
+		# "actions_entities",
+		"action_member",
+		"action_memberCreator",
+		# "card_stickers",
+		# "memberships_member",
+		# "organization",
+		# "myPrefs",
+		# "card_attachments",
+		"cards",
+		"card_checklists",
+		# "boardStars",
+		"labels",
+		"lists",
+		"members",
+		# "membersInvited",
+		"checklists"
+	]
+
 	PARAM_DEFAULT_FIELDS = [
 		"active",
 		"addAttachmentToCard",
@@ -632,17 +648,17 @@ module TrelloQuery
 		"addToOrganizationBoard",
 		"admin",
 		"admins",
-		"avatarHash",
-		"badges",
+		# "avatarHash",
+		# "badges",
 		"billableMemberCount",
 		"bio",
-		"bioData",
+		# "bioData",
 		"bytes",
 		"checkItemStates",
 		"closed",
 		"color",
 		"commentCard",
-		"confirmed",
+		# "confirmed",
 		"convertToCardFromCheckItem",
 		"copyBoard",
 		"copyCard",
@@ -654,24 +670,24 @@ module TrelloQuery
 		"createOrganization",
 		"data",
 		"date",
-		"dateLastActivity",
-		"dateLastView",
+		# "dateLastActivity",
+		# "dateLastView",
 		"deactivated",
 		"deleteAttachmentFromCard",
 		"deleteBoardInvitation",
 		"deleteCard",
 		"deleteOrganizationInvitation",
 		"desc",
-		"descData",
+		# "descData",
 		"disablePowerUp",
 		"displayName",
 		"due",
-		"edgeColor",
-		"email",
-		"emailCard",
-		"enablePowerUp",
+		# "edgeColor",
+		# "email",
+		# "emailCard",
+		# "enablePowerUp",
 		"fullName",
-		"idAttachmentCover",
+		# "idAttachmentCover",
 		"idBoard",
 		"idBoards",
 		"idCard",
@@ -683,16 +699,16 @@ module TrelloQuery
 		"idMembers",
 		"idMembersVoted",
 		"idOrganization",
-		"idPremOrgsAdmin",
-		"idShort",
-		"initials",
-		"invitations",
-		"invited",
+		# "idPremOrgsAdmin",
+		# "idShort",
+		# "initials",
+		# "invitations",
+		# "invited",
 		"isUpload",
 		"labelNames",
 		"labels",
 		"list",
-		"logoHash",
+		# "logoHash",
 		"makeAdminOfBoard",
 		"makeNormalMemberOfBoard",
 		"makeNormalMemberOfOrganization",
@@ -700,9 +716,9 @@ module TrelloQuery
 		"manualCoverAttachment",
 		"me",
 		"memberJoinedTrello",
-		"memberType",
-		"memberships",
-		"mimeType",
+		# "memberType",
+		# "memberships",
+		# "mimeType",
 		"mine",
 		"minimal",
 		"moveCardFromBoard",
@@ -713,21 +729,21 @@ module TrelloQuery
 		"normal",
 		"open",
 		"owners",
-		"pinned",
+		# "pinned",
 		"pos",
-		"powerUps",
-		"prefs",
+		# "powerUps",
+		# "prefs",
 		"premiumFeatures",
 		"previews",
-		"products",
+		# "products",
 		"removeChecklistFromCard",
 		"removeFromOrganizationBoard",
 		"removeMemberFromCard",
 		"shortLink",
-		"shortUrl",
-		"starred",
+		# "shortUrl",
+		# "starred",
 		"status",
-		"subscribed",
+		# "subscribed",
 		"type",
 		"unconfirmedBoardInvitation",
 		"unconfirmedOrganizationInvitation",
@@ -744,7 +760,7 @@ module TrelloQuery
 		"updateList:name",
 		"updateMember",
 		"updateOrganization",
-		"url",
+		# "url",
 		"username",
 		"uses",
 		"visible",
