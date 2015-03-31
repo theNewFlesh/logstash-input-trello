@@ -172,28 +172,22 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	null_func = lambda { |store, key, val| return val }
 
 	public
-	def recurse(data, hash_func, func=nil)
-		if func.nil?
-			func = lambda { |store, key, val| return val }
+	def recurse(data, hash_func, nonhash_func=nil, key_func=nil)
+		if not data.is_a?(Hash)
+			return data  # Leaf (stop recursion here)
 		end
+		
+		nonhash_func = lambda { |store, key, val| val } if nonhash_func.nil?
+		key_func = lambda { |key| key } if key_func.nil?
 
 		store = {}
-		def _recurse(data, store, hash_func, func)
-			data.each do |key, val|
-				if val.is_a?(Hash)
-					# logic goes here
-					result = hash_func.call(store, key, val)
-					if result
-						store[key] = result
-					else
-						store[key] = _recurse(val, store, hash_func, func)
-					end
-				else
-					store[key] = func.call(store, key, val)
-				end
-			end
+
+		data.each do |key, val|
+			val_func = val.is_a?(Hash) ? hash_func : nonhash_func
+			store[key_func.call(key)] = recurse(val_func.call(store, key, val), 
+												hash_func, nonhash_func, key_func)
 		end
-		_recurse(data, store, hash_func, func)
+
 		return store
 	end
 
@@ -202,8 +196,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		if not data.is_a?(Hash)
 			return data
 		end
-		data = data.clone
-		data.to_a.each do |key, val|
+
+		key_transformer = lambda do |key|
 			if @@all_ids.include?(key)
 				# clobber non-id fields with id fields
 				new_key = key.gsub(/^id/, '')
@@ -211,37 +205,14 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 				if plural
 					new_key = pluralize(new_key)
 				end
-				data[new_key] = val
-				data.delete(key)
-			end
-		end
-		data = conform_subfield_names(data)
-		return data
-	end
-
-	private
-	def conform_subfield_names(data, plural=false)
-		func = lambda do |store, key, val|
-			if val.is_a?(Hash)
-				output = val
-				val.to_a.each do |k, v|
-					if @@all_ids.include?(k)
-						# clobber non-id fields with id fields
-						new_key = k.gsub(/^id/, '')
-						new_key = new_key[0].downcase + new_key[1..-1]
-						if plural
-							new_key = pluralize(new_key)
-						end
-						output[new_key] = v
-						output.delete(k)
-					end
-				end
-				return output
+				return new_key
 			else
-				return val
+				return key
 			end
 		end
-		return recurse(data, func, func)
+
+		identity = lambda { |store, k, v| v }
+		return recurse(data, identity, identity, key_transformer)
 	end
 
 	private
