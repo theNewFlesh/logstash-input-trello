@@ -7,14 +7,6 @@ require 'json'
 require 'set'
 require 'URI'
 
-module TrelloQuery
-
-	class QueryClient
-	public
-		# accessors
-		attr_accessor :filters, :fields, :entities, :parameters, :host, :port, :organizations,
-					  :key, :token, :board_ids, :token, :board_ids
-
 module TrelloUtils
 	class TrelloClient
 		attr_reader(:host, :port, :organizations, :key, :token, :board_ids,
