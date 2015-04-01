@@ -1,6 +1,5 @@
 # encoding: utf-8
 
-require "socket"
 require 'uri'
 require 'net/http'
 require 'json'
@@ -29,9 +28,7 @@ module TrelloUtils
 			@fields        = kwargs[:fields]
 			@entities      = kwargs[:entities]
 			@filters       = kwargs[:filters]
-			@port          = kwargs[:port]
-
-			@host = Socket.gethostname	
+			@port          = kwargs[:port]	
 
 			# get board ids if none are provided
 			if @board_ids.empty?

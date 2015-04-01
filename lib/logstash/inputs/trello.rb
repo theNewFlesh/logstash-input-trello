@@ -4,6 +4,7 @@ require "trello_utils"
 require "logstash/inputs/base"
 require "logstash/namespace"
 require "stud/interval"
+require "socket"
 require "json"
 require "time"
 require "set"
@@ -139,7 +140,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 						"actions"
 			]
 		end
-
+		@host = Socket.gethostname
 		@client = TrelloUtils::TrelloClient.new({
 				organizations: @organizations,
 				key:           @key,
@@ -171,28 +172,24 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	end
 
 	private
-	def recurse(data, hash_func, func=nil)
-		if func.nil?
-			func = lambda { |store, key, val| return val }
+	def recurse(data, nonhash_func=nil, hash_func=nil, key_func=nil)
+		hash_func = lambda { |key, val| val } if hash_func.nil?
+		nonhash_func = lambda { |key, val| val } if nonhash_func.nil?
+		key_func = lambda { |key| key } if key_func.nil?
+		
+		if not data.is_a?(Hash)
+			return data # leaf (stop recursion here)
 		end
 
 		store = {}
-		def _recurse(data, store, hash_func, func)
-			data.each do |key, val|
-				if val.is_a?(Hash)
-					# logic goes here
-					result = hash_func.call(store, key, val)
-					if result
-						store[key] = result
-					else
-						store[key] = _recurse(val, store, hash_func, func)
-					end
-				else
-					store[key] = func.call(store, key, val)
-				end
+		data.each do |key, val|
+			if val.is_a?(Hash)
+				store[key_func.call(key)] = recurse(hash_func.call(key, val), 
+													nonhash_func, hash_func, key_func)
+			else
+				store[key_func.call(key)] = nonhash_func.call(key, val)
 			end
 		end
-		_recurse(data, store, hash_func, func)
 		return store
 	end
 
@@ -201,92 +198,29 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		if not data.is_a?(Hash)
 			return data
 		end
-		data = data.clone
-		data.to_a.each do |key, val|
+		key_transformer = lambda do |key|
 			if @@all_ids.include?(key)
 				# clobber non-id fields with id fields
 				new_key = key.gsub(/^id/, '')
 				new_key = new_key[0].downcase + new_key[1..-1]
 				if plural
-					new_key = new_key.pluralize
-				end
-				data[new_key] = val
-				data.delete(key)
-			end
-		end
-		data = conform_subfield_names(data)
-		return data
-	end
-
-	private
-	def conform_subfield_names(data, plural=false)
-		func = lambda do |store, key, val|
-			if val.is_a?(Hash)
-				output = val
-				val.to_a.each do |k, v|
-					if @@all_ids.include?(k)
-						# clobber non-id fields with id fields
-						new_key = k.gsub(/^id/, '')
-						new_key = new_key[0].downcase + new_key[1..-1]
-						if plural
-							new_key = new_key.pluralize
-						end
-						output[new_key] = v
-						output.delete(k)
+					if not /ed$/.match(new_key)
+						new_key = new_key.pluralize
 					end
 				end
-				return output
+				return new_key
 			else
-				return val
+				return key
 			end
 		end
-		return recurse(data, func, func)
-	end
-	
-	private
-	def clean_data(data)
-		data = data.clone
-		# remove actions data field
-		if data.has_key?("data")
-			data["data"].each do |key, val|
-				if not key == "old"
-					data[key] = val
-				end
-			end
-			data.delete("data")
-		end
-		if data.has_key?("board")
-			data.delete("board")
-		end
-		return data
-	end
-	
-	private
-	def get_data_structure_type(val)
-		if val.is_a?(Array)
-			if not val.empty?
-				if val[0].is_a?(Hash)
-					return "array_of_hashes"
-				elsif val[0].is_a?(String)
-					return "array_of_strings"
-				end
-			else
-				return "empty_array"
-			end
-		elsif val.is_a?(Hash)
-			if val.has_key?("id")
-				return "hash_with_id"
-			else
-				return "hash_without_id"
-			end
-		else
-			return val.class.to_s
-		end
+		return recurse(data.clone, nil, nil, key_transformer)
 	end
 
 	private
 	def expand_entities(data, lut)
-		func = lambda do |store, key, val|
+		data = data.clone
+
+		hash_func = lambda do |key, val|
 			pkey = key.pluralize
 			l = lut[pkey]
 			if l.nil?
@@ -334,9 +268,50 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 			return conform_field_names(output)
 		end
-		return recurse(data, func, func)
+		return recurse(data.clone, hash_func, hash_func)
 	end
-	
+
+	private
+	def clean_data(data)
+		data = data.clone
+		# remove actions data field
+		if data.has_key?("data")
+			data["data"].each do |key, val|
+				if not key == "old"
+					data[key] = val
+				end
+			end
+			data.delete("data")
+		end
+		if data.has_key?("board")
+			data.delete("board")
+		end
+		return data
+	end
+
+	private
+	def get_data_structure_type(val)
+		if val.is_a?(Array)
+			if not val.empty?
+				if val[0].is_a?(Hash)
+					return "array_of_hashes"
+				elsif val[0].is_a?(String)
+					return "array_of_strings"
+				end
+			else
+				return "empty_array"
+			end
+		elsif val.is_a?(Hash)
+			if val.has_key?("id")
+				return "hash_with_id"
+			else
+				return "hash_without_id"
+			end
+		else
+			return val.class.to_s
+		end
+	end
+
 	private
 	def collapse(data, source, entities)
 		# entities might be drawn from lut.keys()
