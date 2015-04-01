@@ -71,6 +71,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	]
 
 	@@all_ids = @@singular_ids + @@plural_ids
+	@all_entities_and_ids = @@all_entities + @@all_ids
 	# --------------------------------------------------------------------------
 
 	config(:fields, :validate => :array, :default => ["default"])
@@ -172,6 +173,50 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	end
 
 	private
+	def flatten(data)
+		func = lambda do |key, val|
+			output = val
+			ds_type = get_data_structure_type(val)
+			if ds_type == "array_of_hashes"
+				return group(output)
+			else
+				return output
+			end
+		end
+		return recurse(data.clone, func, func)
+	end
+
+	# private
+	# def clean_lut(lut)
+	# 	def _remove_entities(data)
+	# 		if not data.is_a?(Hash)
+	# 			return data # leaf (stop recursion here)
+	# 		end
+
+	# 		store = {}
+	# 		data.each do |key, val|
+	# 			if not @@all_entities_and_ids.include?(key)
+	# 				if val.is_a?(Hash)
+	# 					store[key] = _remove_entities(val)
+	# 				else
+	# 					store[key] = val
+	# 				end
+	# 			end
+	# 		end
+	# 		return store
+	# 	end
+
+	# 	lut = lut.clone
+	# 	lut.to_a.each do|ent_type, ids|
+	# 		ids.to_a.each do |item|
+	# 			temp = flatten(item.clone)
+	# 			lut[ent_type][item] = _remove_entities(temp)
+	# 		end
+	# 	end
+	# 	return lut
+	# end
+
+	private
 	def recurse(data, nonhash_func=nil, hash_func=nil, key_func=nil)
 		hash_func = lambda { |key, val| val } if hash_func.nil?
 		nonhash_func = lambda { |key, val| val } if nonhash_func.nil?
@@ -218,9 +263,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 	private
 	def expand_entities(data, lut)
-		data = data.clone
-
-		hash_func = lambda do |key, val|
+		func = lambda do |key, val|
 			pkey = key.pluralize
 			l = lut[pkey]
 			if l.nil?
@@ -240,6 +283,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 								new_item = l[item["id"]]
 							end
 						end
+						new_item = flatten(new_item)
 						output.push(new_item)
 					end
 
@@ -247,6 +291,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 					val.each do |id|
 						if l.has_key?(id)
 							output.push(l[id])
+							# output.push( flatten(l[id]) )
 						end
 					end
 				end
@@ -258,17 +303,19 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 			elsif ds_type == "hash_with_id"
 				if l.has_key?(val["id"])
 					output = l[val["id"]]
+					# output = flatten(output)
 				end
 
 			elsif ds_type == "String"
 				if l.has_key?(val)
 					output = l[val]
+					# output = flatten(output)
 				end
 			end
 
 			return conform_field_names(output)
 		end
-		return recurse(data.clone, hash_func, hash_func)
+		return recurse(data.clone, func, func)
 	end
 
 	private
@@ -421,6 +468,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 
 		response = collapse(response, "board", @@plural_entities)
 		lut = create_lut(response)
+		# lut = clean_lut(lut)
 
 		@output_types.each do |out_type|
 			if response.has_key?(out_type)
@@ -432,6 +480,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 					all_ent = @@all_entities.clone
 					all_ent.delete("entities")
 					data = collapse(data, singular, all_ent)
+					data = flatten(data)
 
 					# shuffle board info into data
 					board = response["board"]
