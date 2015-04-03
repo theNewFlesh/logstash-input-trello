@@ -289,7 +289,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	# -	memberships
 	# -	labels
 	# -	cards
-	# -	lists
+	# -	listscd 
 	# -	members
 	# -	checklists
 	# -	action
@@ -299,6 +299,8 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	config(:output_types, :validate => :array, :default => ["all"])
 
 	# An array of fields to be excluded from all events emitted.
+	# Nested fields must be written in fieldref format (ie "[foo][bar][etc]").
+	# 
 	# Default: []
 	config(:exclude_fields, :validate => :array, :default => [])
 	# --------------------------------------------------------------------------
