@@ -11,9 +11,9 @@ require "set"
 require "active_support/core_ext/string/inflections"
 # ------------------------------------------------------------------------------
 
-# The trello filter is used querying the trello database and returning the resulting
-# cards as events
-
+# A Logstash input plugin used for querying Trello at set intervals.
+# It return events of varying types assosciated with Trello entities 
+# (ie cards, lists, etc).
 class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	config_name "trello"
 	milestone 1
