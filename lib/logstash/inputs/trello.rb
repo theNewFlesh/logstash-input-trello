@@ -74,39 +74,233 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	@all_entities_and_ids = @@all_entities + @@all_ids
 	# --------------------------------------------------------------------------
 
+	# An array of all the fields configurable via the trello api.
+	# Unincluded fields will not show up in event data.
+	# Options are:
+	# - ["default"] = a custom array of fields defined within the plugin
+	# - ["all"] = all field
+	# - An array containg any of these fields:
+	# - - actions_entities
+	# - - action_member
+	# - - action_memberCreator
+	# - - card_stickers
+	# - - memberships_member
+	# - - organization
+	# - - myPrefs
+	# - - card_attachments
+	# - - cards
+	# - - card_checklists
+	# - - boardStars
+	# - - labels
+	# - - lists
+	# - - members
+	# - - membersInvited
+	# - - checklist
+	#
+	# -	- active
+	# -	- addAttachmentToCard
+	# -	- addChecklistToCard
+	# -	- addMemberToBoard
+	# -	- addMemberToCard
+	# -	- addMemberToOrganization
+	# -	- addToOrganizationBoard
+	# -	- admin
+	# -	- admins
+	# -	- avatarHash
+	# -	- badges
+	# -	- billableMemberCount
+	# -	- bio
+	# -	- bioData
+	# -	- bytes
+	# -	- checkItemStates
+	# -	- closed
+	# -	- color
+	# -	- commentCard
+	# -	- confirmed
+	# -	- convertToCardFromCheckItem
+	# -	- copyBoard
+	# -	- copyCard
+	# -	- copyCommentCard
+	# -	- count
+	# -	- createBoard
+	# -	- createCard
+	# -	- createList
+	# -	- createOrganization
+	# -	- data
+	# -	- date
+	# -	- dateLastActivity
+	# -	- dateLastView
+	# -	- deactivated
+	# -	- deleteAttachmentFromCard
+	# -	- deleteBoardInvitation
+	# -	- deleteCard
+	# -	- deleteOrganizationInvitation
+	# -	- desc
+	# -	- descData
+	# -	- disablePowerUp
+	# -	- displayName
+	# -	- due
+	# -	- edgeColor
+	# -	- email
+	# -	- emailCard
+	# -	- enablePowerUp
+	# -	- fullName
+	# -	- idAttachmentCover
+	# -	- idBoard
+	# -	- idBoards
+	# -	- idCard
+	# -	- idChecklists
+	# -	- idLabels
+	# -	- idList
+	# -	- idMember
+	# -	- idMemberCreator
+	# -	- idMembers
+	# -	- idMembersVoted
+	# -	- idOrganization
+	# -	- idPremOrgsAdmin
+	# -	- idShort
+	# -	- initials
+	# -	- invitations
+	# -	- invited
+	# -	- isUpload
+	# -	- labelNames
+	# -	- labels
+	# -	- list
+	# -	- logoHash
+	# -	- makeAdminOfBoard
+	# -	- makeNormalMemberOfBoard
+	# -	- makeNormalMemberOfOrganization
+	# -	- makeObserverOfBoard
+	# -	- manualCoverAttachment
+	# -	- me
+	# -	- memberJoinedTrello
+	# -	- memberType
+	# -	- memberships
+	# -	- mimeType
+	# -	- mine
+	# -	- minimal
+	# -	- moveCardFromBoard
+	# -	- moveCardToBoard
+	# -	- moveListFromBoard
+	# -	- moveListToBoard
+	# -	- name
+	# -	- normal
+	# -	- open
+	# -	- owners
+	# -	- pinned
+	# -	- pos
+	# -	- powerUps
+	# -	- prefs
+	# -	- premiumFeatures
+	# -	- previews
+	# -	- products
+	# -	- removeChecklistFromCard
+	# -	- removeFromOrganizationBoard
+	# -	- removeMemberFromCard
+	# -	- shortLink
+	# -	- shortUrl
+	# -	- starred
+	# -	- status
+	# -	- subscribed
+	# -	- type
+	# -	- unconfirmedBoardInvitation
+	# -	- unconfirmedOrganizationInvitation
+	# -	- updateBoard
+	# -	- updateCard
+	# -	- updateCard:closed
+	# -	- updateCard:desc
+	# -	- updateCard:idList
+	# -	- updateCard:name
+	# -	- updateCheckItemStateOnCard
+	# -	- updateChecklist
+	# -	- updateList
+	# -	- updateList:closed
+	# -	- updateList:name
+	# -	- updateMember
+	# -	- updateOrganization
+	# -	- url
+	# -	- username
+	# -	- uses
+	# -	- visible
+	# -	- website
+	#
+	# Default: ["default"]
 	config(:fields, :validate => :array, :default => ["default"])
+
+	# A hash of arrays which is used to cull entities.
+	# This is the master hash:
+	# 	{
+	# 	"cards" => 			["open", "closed", "visible"],
+	# 	"lists" => 			["open", "closed"],
+	# 	"members" => 		["admins", "normal", "owners"],
+	# 	"membersInvited" => ["admins", "normal", "owners"],
+	# 	"boards" =>  		["closed", "members", "open", "organization", 
+	# 						 "pinned", "public", "starred", "unpinned"]
+	# 	}
+	#
+	# Ommiting a key from the hash will prevent that entity from being culled.
+	# Adding a filter to an entity's array will cause it to be culled by that.
+	# filter.  For instance, if cards was set to ["open"], then trello would 
+	# only return open cards.
+	#
+	# Default: {}, which means nothing will be culled.
 	config(:filters, :validate => :hash, :default => {})
-	config(:entities, :validate => :array, :default => ["default"])
 
+	# Do not change this.
+	# Defualt: "json_lines"
 	default(:codec, "json_lines")
-		# defualt: json_lines
 
+	# The port trello listens on for REST requests.
+	# Default: 443
 	config(:port, :validate => :number, :default => 443)
-		# The port trello listens on for REST requests
 
+	# An array of organizations from which to derive board ids.
+	# This is not used if board ids are provided.
 	config(:organizations, :validate => :array, :required => true)
-		# an array of organizations from which to derive board ids
 
+	# Coerce output field names into snake_case.
+	# Default: false
 	config(:snake_case, :validate => :boolean, :default => false)
-		# coerce output field names into snake_case
 
-	config(:interval, :validate => :number, :default => 1800)
-		# query interval
-		# default: 30 minutes
+	# The frewuncy with wich to query Trello, in seconds.
+	# Default: 3600 (1 hour)
+	config(:interval, :validate => :number, :default => 3600)
 
+	# Trello oauth key
 	config(:key, :validate => :string, :required => true)
-		# oauth key
 
+	# Trello oauth secret
 	config(:token, :validate => :string, :required => true)
-		# oauth secret
 
-	config(:organizations, :validate => :array, :required => true)
-		# an array of organizations from which to derive board ids
-
+	# An array of ids of boards to be parsed.
+	# A board id (shortLink actually) can be found in its URL.
+	# For instance, in this URL, https://trello.com/b/dFsjpzeN/logstash, the
+	# board id is dFsjpzeN.
+	# 
+	# If no ids are given, this plugin will query Trello based upon all the
+	# boards assosciated with your organization.
+	# 
+	# Default: [] 
 	config(:board_ids, :validate => :array, :default => [])
-		# ids of boards to be parsed
 
+	# An array of event types to be emitted.
+	# Output types include:
+	# -	board
+	# -	memberships
+	# -	labels
+	# -	cards
+	# -	lists
+	# -	members
+	# -	checklists
+	# -	action
+	# If output_types is set to ["all"], then all types will be emitted.
+	# 
+	# Default: ["all"]
 	config(:output_types, :validate => :array, :default => ["all"])
+
+	# An array of fields to be excluded from all events emitted.
+	# Default: []
+	config(:exclude_fields, :validate => :array, :default => [])
 	# --------------------------------------------------------------------------
 
 	public
@@ -121,12 +315,6 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 			@filters = TrelloUtils::PARAM_ALL_FILTERS
 		elsif @filters == ["default"]
 			@filters = TrelloUtils::PARAM_DEFAULT_FILTERS
-		end
-		
-		if @entities == ["all"]
-			@entities = TrelloUtils::PARAM_ALL_ENTITIES
-		elsif @entities == ["default"]
-			@entities = TrelloUtils::PARAM_DEFAULT_ENTITIES
 		end
 
 		if @output_type == ["all"]
@@ -148,12 +336,44 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 				token:         @token,
 				board_ids:     @board_ids,
 				fields:        @fields,
-				entities:      @entities,
 				filters:       @filters,
 				port:          @port
 		})
 	end
 	# --------------------------------------------------------------------------
+
+	private
+	def recursive_has_key?(data, keys)
+		if not data.is_a?(Hash)
+			return false
+		end    
+		if data.has_key?(keys[0])
+			if keys.length > 1
+				recursive_has_key?(data[keys[0]], keys[1..-1])
+			else
+				return true
+			end
+		else
+			return false
+		end
+	end
+
+	private
+	def fieldref_to_array(fieldref)
+		output = fieldref.split("][")
+		output.map! { |item| item.gsub(/\[|\]/, "") }
+		return output
+	end
+	
+	private
+	def exclude_fields!(event)
+		@exclude_fields.each_with_index do |field|
+			f = fieldref_to_array(field)
+			if recursive_has_key?(event.to_hash, f)
+				event.remove(field)
+			end
+		end
+	end
 	
 	private
 	def create_lut(data)
@@ -239,7 +459,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 	end
 
 	private
-	def conform_field_names(data, plural=false)
+	def conform_field_names(data, form=nil)
 		if not data.is_a?(Hash)
 			return data
 		end
@@ -248,9 +468,13 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 				# clobber non-id fields with id fields
 				new_key = key.gsub(/^id/, '')
 				new_key = new_key[0].downcase + new_key[1..-1]
-				if plural
-					if not /ed$/.match(new_key)
-						new_key = new_key.pluralize
+				if not form.nil?
+					if form == 'plural'
+						if not /ed$/.match(new_key)
+							new_key = new_key.pluralize
+						end
+					elsif form == 'singular'
+						new_key = new_key.singularize
 					end
 				end
 				return new_key
@@ -473,13 +697,13 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		@output_types.each do |out_type|
 			if response.has_key?(out_type)
 				response[out_type].each do |source|
-					singular = out_type.singularize
+					out_type_ = out_type.singularize
 					data = clean_data(source)
-					data = conform_field_names(data, true)
+					data = conform_field_names(data, 'plural')
 					data = expand_entities(data, lut)
 					all_ent = @@all_entities.clone
 					all_ent.delete("entities")
-					data = collapse(data, singular, all_ent)
+					data = collapse(data, out_type_, all_ent)
 					data = flatten(data)
 
 					# shuffle board info into data
@@ -496,18 +720,19 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 					event = nil
 					# set the timestamp of actions to their date field
 					_timestamp = timestamp
-					if singular == "action"
+					if out_type_ == "action"
 						_timestamp = data["action"]["date"]
 						data["action"].delete("date")
 					end
 					event = LogStash::Event.new(
 						"host" => @host, 
-						"type" => @type + '_' + singular,
+						"type" => @type + '_' + out_type_,
 						"@timestamp" => _timestamp,
 						"message" => JSON.dump(source) )
 					data.each do |key, val|
 						event[key] = val
 					end
+					exclude_fields!(event)
 					decorate(event)
 					queue << event
 				end

@@ -16,7 +16,6 @@ module TrelloUtils
 							token:          nil, # oauth secret
 							board_ids:      [],
 							fields:         PARAM_DEFAULT_FIELDS,
-							entities:       PARAM_DEFAULT_ENTITIES,
 							filters:        {},
 							port:           443 # trello REST port
 			})
@@ -26,7 +25,6 @@ module TrelloUtils
 			@token         = kwargs[:token]
 			@board_ids     = kwargs[:board_ids]
 			@fields        = kwargs[:fields]
-			@entities      = kwargs[:entities]
 			@filters       = kwargs[:filters]
 			@port          = kwargs[:port]	
 
@@ -41,6 +39,32 @@ module TrelloUtils
 				@board_ids = get_board_ids(@board_ids, board_filter)
 			end
 
+			# create entities hash from select fields in fields
+			entities = {}
+			@fields.each do |field|
+				if ALL_ENTITIES.include?(field)
+					state = ALL_ENTITIES[field]
+					if state == "false"
+						entities[field] = "true"
+					elsif state == "none"
+						if field == "boardStars"
+							entities[field] = "mine"
+						else
+							entities[field] = "all"
+						end
+					end
+				end
+			end
+			
+			# mutate entities hash according to filters
+			@filters.each do |key, val|
+				if entities.include?(key)
+					if val != "none"
+						entities[key] = array_to_uri(filters[val])
+					end
+				end
+			end
+
 			# create fields hash
 			@fields = Set.new(@fields)
 			new_fields = ALL_FIELDS.clone
@@ -50,33 +74,8 @@ module TrelloUtils
 			end
 			@fields = new_fields
 
-			# create entities hash
-			new_entities = {}
-	        @entities.each do |entity|
-				state = ALL_ENTITIES[entity]
-				if state == "false"
-					new_entities[entity] = "true"
-				elsif state == "none"
-					if entity == "boardStars"
-						new_entities[entity] = "mine"
-					else
-						new_entities[entity] = "all"
-					end
-				end
-			end
-			
-			# mutate entities hash according to filters
-			@filters.each do |key, val|
-				if new_entities.include?(key)
-					if val != "none"
-						new_entities[key] = array_to_uri(filters[entity])
-					end
-				end
-			end
-			@entities = new_entities
-
 			# merge fields and entities into params
-			params = new_fields.merge(new_entities)
+			params = new_fields.merge(entities)
 			
 			# switch out board_fields with fields
 			params["fields"] = params["board_fields"]
@@ -457,7 +456,7 @@ module TrelloUtils
 		]
 	}
 
-	PARAM_ALL_ENTITIES = [
+	PARAM_ALL_FIELDS = [
 		"actions_entities",
 		"action_member",
 		"action_memberCreator",
@@ -473,10 +472,7 @@ module TrelloUtils
 		"lists",
 		"members",
 		"membersInvited",
-		"checklists"
-	]
-
-	PARAM_ALL_FIELDS = [
+		"checklists",
 		"active",
 		"addAttachmentToCard",
 		"addChecklistToCard",
@@ -605,7 +601,7 @@ module TrelloUtils
 		"website"
 	]
 
-	PARAM_DEFAULT_ENTITIES = [
+	PARAM_DEFAULT_FIELDS = [
 		# "actions_entities",
 		"action_member",
 		"action_memberCreator",
@@ -621,10 +617,7 @@ module TrelloUtils
 		"lists",
 		"members",
 		# "membersInvited",
-		"checklists"
-	]
-
-	PARAM_DEFAULT_FIELDS = [
+		"checklists",
 		"active",
 		"addAttachmentToCard",
 		"addChecklistToCard",
