@@ -647,6 +647,7 @@ class LogStash::Inputs::Trello < LogStash::Inputs::Base
 		data.each { |index, item| index.map! { |item| item.underscore } }
 		return data
 	end
+	# --------------------------------------------------------------------------
 
 	private
 	def nested_hash_to_matrix(data)
