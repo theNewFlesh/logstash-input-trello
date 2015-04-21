@@ -1,7 +1,7 @@
 Gem::Specification.new do |s|
 
 	s.name            = 'logstash-input-trello'
-	s.version         = '0.1.0'
+	s.version         = '0.1.1'
 	s.licenses        = ['Apache License (2.0)']
 	s.summary         = "Queries Trello, returns results as events."
 	s.description     = "A Logstash input plugin used for querying Trello at set intervals. It return events of varying types associated with Trello entities (ie cards, lists, etc)."
